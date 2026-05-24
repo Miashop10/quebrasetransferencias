@@ -926,9 +926,8 @@ function doCloudSave(){
 function enviarQuebraAgora(q){
   if(!CLOUD_URL){return;}
   setSyncStatus('Salvando…','saving');
-  // envia SÓ a quebra nova, num pacote minúsculo e SEM a foto (à prova de tamanho)
-  const qLeve=Object.assign({},q);
-  if(qLeve.foto && qLeve.foto.length>200000){ qLeve.foto=null; } // foto muito grande não vai (fica local)
+  // PASSO 1: envia a quebra SEM foto -> pacote minúsculo, sobe sempre
+  const qLeve=Object.assign({},q); qLeve.foto=null;
   const payload=JSON.stringify({action:'addQuebra',quebra:qLeve,seq:DB.seq});
   fetch(CLOUD_URL,{
     method:'POST',
@@ -940,23 +939,21 @@ function enviarQuebraAgora(q){
     if(resp && resp.data && typeof resp.data==='object'){
       mergeDB(resp.data);
       if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}}
-      const chegou=(resp.data.quebras||[]).some(x=>x.id===q.id);
-      setSyncStatus(chegou?'Salvo na nuvem ✓':'Salvo (sincronizando…)', 'ok');
-    }else{
-      setSyncStatus('Salvo na nuvem ✓','ok');
     }
+    setSyncStatus('Salvo na nuvem ✓','ok');
+    // PASSO 2: se tem foto, tenta enviar a foto separada (não trava se falhar)
+    if(q.foto){ enviarFotoAgora('quebra', q.id, q.foto); }
   })
   .catch(()=>{
     try{ navigator.sendBeacon(CLOUD_URL, new Blob([payload],{type:'text/plain;charset=utf-8'})); }catch(e){}
     setSyncStatus('Enviado — toque p/ confirmar','err');
   });
 }
-/* envia UMA transferência individualmente (pacote mínimo, igual às quebras) */
+/* envia UMA transferência individualmente, SEM foto primeiro; a foto vai separada depois */
 function enviarTransferenciaAgora(t){
   if(!CLOUD_URL){return;}
   setSyncStatus('Salvando…','saving');
-  const tLeve=Object.assign({},t);
-  if(tLeve.foto && tLeve.foto.length>200000){ tLeve.foto=null; }
+  const tLeve=Object.assign({},t); tLeve.foto=null;
   const payload=JSON.stringify({action:'addTransfer',transfer:tLeve,seq:DB.seq});
   fetch(CLOUD_URL,{
     method:'POST',
@@ -968,16 +965,27 @@ function enviarTransferenciaAgora(t){
     if(resp && resp.data && typeof resp.data==='object'){
       mergeDB(resp.data);
       if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}}
-      const chegou=(resp.data.transfers||[]).some(x=>x.id===t.id);
-      setSyncStatus(chegou?'Salvo na nuvem ✓':'Salvo (sincronizando…)', 'ok');
-    }else{
-      setSyncStatus('Salvo na nuvem ✓','ok');
     }
+    setSyncStatus('Salvo na nuvem ✓','ok');
+    if(t.foto){ enviarFotoAgora('transfer', t.id, t.foto); }
   })
   .catch(()=>{
     try{ navigator.sendBeacon(CLOUD_URL, new Blob([payload],{type:'text/plain;charset=utf-8'})); }catch(e){}
     setSyncStatus('Enviado — toque p/ confirmar','err');
   });
+}
+/* envia a foto de um registro SEPARADAMENTE (não trava o registro se falhar) */
+function enviarFotoAgora(tipo, id, foto){
+  if(!CLOUD_URL || !foto){return;}
+  const payload=JSON.stringify({action:'addFoto',tipo:tipo,id:id,foto:foto});
+  fetch(CLOUD_URL,{
+    method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body:payload
+  }).then(r=>r.json().catch(()=>null)).then(resp=>{
+    if(resp && resp.data){ mergeDB(resp.data);
+      if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}} }
+  }).catch(()=>{}); // se a foto falhar, tudo bem: o registro já subiu
 }
 /* busca o DB da nuvem e mescla com o local (sem perder registros) */
 function cloudLoad(){
@@ -1091,7 +1099,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v8';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v9';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -2186,7 +2194,7 @@ window.rodarDiagnostico=function(){
       .then(resp=>{
         const nuvem=(resp&&resp.data&&resp.data.quebras)?resp.data.quebras.length:0;
         const lista=(resp&&resp.data&&resp.data.quebras)?resp.data.quebras.map(q=>q.filial+': '+q.codigo).join('\n'):'(nenhuma)';
-        alert('DIAGNÓSTICO v8\n\n'
+        alert('DIAGNÓSTICO v9\n\n'
           +'Quebras neste aparelho: '+locais.length+'\n'
           +'Quebras na nuvem AGORA: '+nuvem+'\n\n'
           +'Enviei as deste aparelho uma a uma.\n'
