@@ -923,7 +923,10 @@ function doCloudSave(){
 function enviarQuebraAgora(q){
   if(!CLOUD_URL){return;}
   setSyncStatus('Salvando…','saving');
-  const payload=JSON.stringify({action:'save',data:dbParaNuvem()});
+  // envia SÓ a quebra nova, num pacote minúsculo e SEM a foto (à prova de tamanho)
+  const qLeve=Object.assign({},q);
+  if(qLeve.foto && qLeve.foto.length>200000){ qLeve.foto=null; } // foto muito grande não vai (fica local)
+  const payload=JSON.stringify({action:'addQuebra',quebra:qLeve,seq:DB.seq});
   fetch(CLOUD_URL,{
     method:'POST',
     headers:{'Content-Type':'text/plain;charset=utf-8'},
@@ -941,7 +944,6 @@ function enviarQuebraAgora(q){
     }
   })
   .catch(()=>{
-    // tenta uma segunda vez via sendBeacon
     try{ navigator.sendBeacon(CLOUD_URL, new Blob([payload],{type:'text/plain;charset=utf-8'})); }catch(e){}
     setSyncStatus('Enviado — toque p/ confirmar','err');
   });
@@ -1058,7 +1060,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v6';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v7';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -2133,36 +2135,36 @@ if(CLOUD_URL){
 
 /* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
 window.rodarDiagnostico=function(){
-  const local = (DB.quebras||[]).length;
-  setSyncStatus('Diagnosticando…','saving');
-  fetch(CLOUD_URL+'?action=load&t='+Date.now())
-    .then(r=>r.json())
-    .then(resp=>{
-      const nuvemAntes = (resp&&resp.data&&resp.data.quebras)?resp.data.quebras.length:0;
-      // força o envio do que está neste aparelho para a nuvem
-      return fetch(CLOUD_URL,{
-        method:'POST',
-        headers:{'Content-Type':'text/plain;charset=utf-8'},
-        body:JSON.stringify({action:'save',data:DB})
-      }).then(r=>r.json().catch(()=>null)).then(saveResp=>{
-        // relê para confirmar
-        return fetch(CLOUD_URL+'?action=load&t='+Date.now()).then(r=>r.json()).then(resp2=>{
-          const nuvemDepois=(resp2&&resp2.data&&resp2.data.quebras)?resp2.data.quebras.length:0;
-          const lista=(resp2&&resp2.data&&resp2.data.quebras)?resp2.data.quebras.map(q=>q.filial+': '+q.codigo).join('\n'):'(nenhuma)';
-          const ok = saveResp && saveResp.ok!==false;
-          alert('DIAGNÓSTICO v3 (sync)\n\n'
-            +'Quebras neste aparelho: '+local+'\n'
-            +'Quebras na nuvem ANTES: '+nuvemAntes+'\n'
-            +'Tentei enviar as deste aparelho...\n'
-            +'Resposta do servidor: '+(ok?'OK ✓':'ERRO ✗')+'\n'
-            +'Quebras na nuvem AGORA: '+nuvemDepois+'\n\n'
-            +'Na nuvem:\n'+lista+'\n\n'
-            +'URL termina em: ...'+CLOUD_URL.slice(-12));
-          if(nuvemDepois>nuvemAntes||nuvemDepois>=local) setSyncStatus('Salvo na nuvem ✓','ok');
-        });
-      });
-    })
-    .catch(e=>{ alert('DIAGNÓSTICO\n\nNÃO consegui falar com a nuvem.\nErro: '+e+'\n\nVerifique a conexão/internet deste aparelho.'); });
+  const locais = (DB.quebras||[]).slice();
+  setSyncStatus('Recuperando…','saving');
+  // envia cada quebra local individualmente (pacote mínimo, sem foto grande)
+  function enviarUma(i){
+    if(i>=locais.length){ verificar(); return; }
+    const q=Object.assign({},locais[i]);
+    if(q.foto && q.foto.length>200000) q.foto=null;
+    fetch(CLOUD_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body:JSON.stringify({action:'addQuebra',quebra:q,seq:DB.seq})})
+      .then(()=>{ setSyncStatus('Recuperando… '+(i+1)+'/'+locais.length,'saving'); })
+      .catch(()=>{})
+      .finally(()=>enviarUma(i+1));
+  }
+  function verificar(){
+    fetch(CLOUD_URL+'?action=load&t='+Date.now())
+      .then(r=>r.json())
+      .then(resp=>{
+        const nuvem=(resp&&resp.data&&resp.data.quebras)?resp.data.quebras.length:0;
+        const lista=(resp&&resp.data&&resp.data.quebras)?resp.data.quebras.map(q=>q.filial+': '+q.codigo).join('\n'):'(nenhuma)';
+        alert('DIAGNÓSTICO v6\n\n'
+          +'Quebras neste aparelho: '+locais.length+'\n'
+          +'Quebras na nuvem AGORA: '+nuvem+'\n\n'
+          +'Enviei as deste aparelho uma a uma.\n'
+          +(nuvem>=locais.length?'✓ Tudo sincronizado!':'Se ainda faltam, repita o diag.')+'\n\n'
+          +'Na nuvem:\n'+lista);
+        setSyncStatus('Salvo na nuvem ✓','ok');
+      })
+      .catch(e=>{ alert('DIAGNÓSTICO\n\nNÃO consegui ler a nuvem.\nErro: '+e); });
+  }
+  enviarUma(0);
 };
 </script>
 </body>
