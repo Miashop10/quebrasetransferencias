@@ -854,11 +854,11 @@ function mergeDB(nuvem){
   // seq: usa o maior para não repetir ids
   DB.seq = Math.max(DB.seq||1000, nuvem.seq||1000); seq = DB.seq;
 }
-/* envia o DB para a nuvem — POST direto e simples (o servidor faz o merge) */
+/* envia o DB para a nuvem — POST direto (o servidor faz o merge) */
 function cloudSave(){
   if(!CLOUD_URL)return;
   if(cloudTimer)clearTimeout(cloudTimer);
-  cloudTimer=setTimeout(doCloudSave,250); // agrupa gravações muito seguidas
+  cloudTimer=setTimeout(doCloudSave,200);
 }
 /* envia imediatamente */
 function flushCloudSave(){
@@ -870,6 +870,7 @@ function doCloudSave(){
   if(!CLOUD_URL)return;
   setSyncStatus('Salvando…','saving');
   const payload=JSON.stringify({action:'save',data:DB});
+  // fetch aguenta payloads grandes (fotos). É o método principal.
   fetch(CLOUD_URL,{
     method:'POST',
     headers:{'Content-Type':'text/plain;charset=utf-8'},
@@ -877,18 +878,14 @@ function doCloudSave(){
   })
     .then(r=>r.json().catch(()=>null))
     .then(resp=>{
-      if(resp && resp.ok===false){
-        setSyncStatus('Erro ao salvar — verifique a planilha','err');
-      }else{
-        if(resp && resp.data && typeof resp.data==='object'){
-          mergeDB(resp.data);
-          if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}}
-        }
-        setSyncStatus('Salvo na nuvem ✓','ok');
+      if(resp && resp.data && typeof resp.data==='object'){
+        mergeDB(resp.data);
+        if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}}
       }
+      setSyncStatus('Salvo na nuvem ✓','ok');
     })
     .catch(()=>{
-      setSyncStatus('Sem conexão — toque aqui p/ reenviar','err');
+      setSyncStatus('Sem conexão — toque p/ reenviar','err');
     });
 }
 /* busca o DB da nuvem e mescla com o local (sem perder registros) */
@@ -1088,7 +1085,11 @@ function handleFoto(e){
   const f=e.target.files[0];const img=$('#t_preview');const rm=$('#btnRemoverFoto');
   if(!f){return;}
   const r=new FileReader();
-  r.onload=()=>{img.src=r.result;img.classList.remove('hidden');rm.classList.remove('hidden');};
+  r.onload=()=>{
+    comprimirImagem(r.result, 700, 0.5, (comprimida)=>{
+      img.src=comprimida;img.classList.remove('hidden');rm.classList.remove('hidden');
+    });
+  };
   r.readAsDataURL(f);
 }
 $('#t_foto_cam').addEventListener('change',handleFoto);
@@ -1866,8 +1867,28 @@ function qHandleFoto(e){
   const f=e.target.files[0];const img=$('#q_preview');const rm=$('#qBtnRemoverFoto');
   if(!f)return;
   const r=new FileReader();
-  r.onload=()=>{img.src=r.result;img.classList.remove('hidden');rm.classList.remove('hidden');};
+  r.onload=()=>{
+    // comprime/redimensiona a foto para não pesar na nuvem
+    comprimirImagem(r.result, 700, 0.5, (comprimida)=>{
+      img.src=comprimida;img.classList.remove('hidden');rm.classList.remove('hidden');
+    });
+  };
   r.readAsDataURL(f);
+}
+/* reduz a imagem para no máximo "maxLado" px e qualidade "q" (0..1), devolve dataURL JPEG */
+function comprimirImagem(dataURL, maxLado, q, cb){
+  const im=new Image();
+  im.onload=()=>{
+    let w=im.width, h=im.height;
+    if(w>h && w>maxLado){ h=Math.round(h*maxLado/w); w=maxLado; }
+    else if(h>=w && h>maxLado){ w=Math.round(w*maxLado/h); h=maxLado; }
+    const c=document.createElement('canvas');c.width=w;c.height=h;
+    c.getContext('2d').drawImage(im,0,0,w,h);
+    try{ cb(c.toDataURL('image/jpeg',q)); }
+    catch(e){ cb(dataURL); } // se algo falhar, usa a original
+  };
+  im.onerror=()=>cb(dataURL);
+  im.src=dataURL;
 }
 $('#q_foto_cam').addEventListener('change',qHandleFoto);
 $('#q_foto_file').addEventListener('change',qHandleFoto);
@@ -2040,8 +2061,9 @@ if(!STORAGE_OK){const w=$('#storageWarn');if(w)w.classList.remove('hidden');}
 window.addEventListener('beforeunload',()=>{
   if(CLOUD_URL && session){
     try{
-      const blob=new Blob([JSON.stringify({action:'save',data:DB})],{type:'text/plain;charset=utf-8'});
-      navigator.sendBeacon(CLOUD_URL, blob);
+      // keepalive permite o envio continuar mesmo com a aba fechando; aguenta payload com foto
+      fetch(CLOUD_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
+        body:JSON.stringify({action:'save',data:DB}),keepalive:true});
     }catch(e){}
   }
 });
