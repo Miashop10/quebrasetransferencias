@@ -807,7 +807,7 @@ function saveDB(){
 /* ===================== SINCRONIZAÇÃO COM A NUVEM (Google Sheets via Apps Script) =====================
    Cole abaixo, entre as aspas, o link do seu Apps Script publicado (termina em /exec).
    Enquanto estiver vazio, o sistema funciona só localmente neste navegador.            */
-const CLOUD_URL = "https://script.google.com/macros/s/AKfycbyG6PaqGTeoVCUPL7LaFt0Mbb-tgWbSxm8cz1_YruQDADyw-0YGwhRbyk-rzgQ6fr2_/exec";
+const CLOUD_URL = "https://script.google.com/macros/s/AKfycbw_5DiNxBFvaGx2diFfNmGpcsUsJYzkbaN-o37D_gWC9tUbna3X_p2CX055HbNLB6kX/exec";
 
 let cloudTimer=null, cloudBusy=false, cloudPending=false;
 function setSyncStatus(txt,cls){
@@ -819,7 +819,13 @@ function cloudSave(){
   if(!CLOUD_URL)return;
   cloudPending=true;
   if(cloudTimer)clearTimeout(cloudTimer);
-  cloudTimer=setTimeout(doCloudSave,900);
+  cloudTimer=setTimeout(doCloudSave,600);
+}
+/* envia imediatamente, sem esperar o debounce (usado ao sair/fechar) */
+function flushCloudSave(){
+  if(!CLOUD_URL)return;
+  if(cloudTimer)clearTimeout(cloudTimer);
+  doCloudSave();
 }
 function doCloudSave(){
   if(!CLOUD_URL)return;
@@ -830,8 +836,13 @@ function doCloudSave(){
     method:'POST',
     headers:{'Content-Type':'text/plain;charset=utf-8'},
     body:JSON.stringify({action:'save',data:DB})
-  }).then(()=>{
-    setSyncStatus('Salvo na nuvem ✓','ok');
+  }).then(r=>r.json().catch(()=>null)).then(resp=>{
+    if(resp && resp.ok===false){
+      // o Apps Script respondeu, mas deu erro ao gravar (ex.: permissão)
+      setSyncStatus('Erro ao salvar na nuvem','err');
+    }else{
+      setSyncStatus('Salvo na nuvem ✓','ok');
+    }
   }).catch(()=>{
     setSyncStatus('Sem conexão — salvo só neste aparelho','err');
   }).finally(()=>{
@@ -937,6 +948,7 @@ function doLogin(){
   }
 }
 $('#logoutBtn').addEventListener('click',()=>{
+  flushCloudSave(); // garante que tudo foi enviado à nuvem antes de sair
   session=null;$('#app').style.display='none';$('#loginScreen').style.display='flex';
   document.body.classList.remove('mode-filial','mode-master');
   $('#loginPass').value='';$('#loginErr').textContent='';
@@ -982,9 +994,9 @@ function switchTab(view){
   }
   $$('#navGrid .opt-card').forEach(c=>c.classList.toggle('active',c.dataset.view===view));
   $$('.view').forEach(v=>v.classList.toggle('active',v.id===view));
-  if(view==='v4')renderV4();
+  if(view==='v4'){renderV4();cloudLoad().then(u=>{if(u)renderV4();});}
   if(view==='v6')renderSenhas();
-  if(view==='v2'){renderV2();renderV3();}
+  if(view==='v2'){renderV2();renderV3();cloudLoad().then(u=>{if(u){renderV2();renderV3();}});}
   if(view==='v3')renderV3();
   if(view==='v7')renderV7();
   if(view==='v1')fillFornecedorListas();
@@ -1989,6 +2001,11 @@ function refreshAll(){
 /* ===================== INIT ===================== */
 buildLoginOptions();
 if(!STORAGE_OK){const w=$('#storageWarn');if(w)w.classList.remove('hidden');}
+// clicar no indicador de sincronização força uma atualização imediata da nuvem
+(function(){const el=$('#syncStatus');if(el){el.style.cursor='pointer';el.title='Clique para atualizar';
+  el.addEventListener('click',()=>{cloudLoad().then(u=>{if(u&&session){refreshAll();}});});}})();
+// ao fechar/recarregar a aba, tenta enviar o que ainda não foi salvo
+window.addEventListener('beforeunload',()=>{ if(CLOUD_URL && cloudPending){ flushCloudSave(); } });
 // se a nuvem estiver configurada, busca os dados e atualiza as opções de login
 if(CLOUD_URL){
   cloudLoad().then(updated=>{ if(updated){ buildLoginOptions(); } });
