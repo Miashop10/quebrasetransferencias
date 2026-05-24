@@ -809,7 +809,7 @@ function saveDB(){
    Enquanto estiver vazio, o sistema funciona só localmente neste navegador.            */
 const CLOUD_URL = "https://script.google.com/macros/s/AKfycbxrDcEVodBObGg7xtr1-yZn4qLJcZl4DK-QGS0C9ES9E1dLr-yHGvzI04anlb1mNrri/exec";
 
-let cloudTimer=null, cloudBusy=false, cloudPending=false;
+let cloudTimer=null;
 function setSyncStatus(txt,cls){
   const el=$('#syncStatus');if(!el)return;
   el.textContent=txt;el.className='sync-status '+(cls||'');
@@ -854,14 +854,13 @@ function mergeDB(nuvem){
   // seq: usa o maior para não repetir ids
   DB.seq = Math.max(DB.seq||1000, nuvem.seq||1000); seq = DB.seq;
 }
-/* envia o DB para a nuvem, com "debounce" curto (agrupa gravações seguidas) */
+/* envia o DB para a nuvem — POST direto e simples (o servidor faz o merge) */
 function cloudSave(){
   if(!CLOUD_URL)return;
-  cloudPending=true;
   if(cloudTimer)clearTimeout(cloudTimer);
-  cloudTimer=setTimeout(doCloudSave,300);
+  cloudTimer=setTimeout(doCloudSave,250); // agrupa gravações muito seguidas
 }
-/* envia imediatamente, sem esperar o debounce (usado ao sair/fechar) */
+/* envia imediatamente */
 function flushCloudSave(){
   if(!CLOUD_URL)return;
   if(cloudTimer)clearTimeout(cloudTimer);
@@ -869,21 +868,18 @@ function flushCloudSave(){
 }
 function doCloudSave(){
   if(!CLOUD_URL)return;
-  if(cloudBusy){cloudPending=true;return;} // tenta de novo quando a atual terminar
-  cloudBusy=true;cloudPending=false;
   setSyncStatus('Salvando…','saving');
-  // grava direto (o servidor/Apps Script faz o merge, então não precisa ler antes)
+  const payload=JSON.stringify({action:'save',data:DB});
   fetch(CLOUD_URL,{
     method:'POST',
     headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body:JSON.stringify({action:'save',data:DB})
+    body:payload
   })
     .then(r=>r.json().catch(()=>null))
     .then(resp=>{
       if(resp && resp.ok===false){
         setSyncStatus('Erro ao salvar — verifique a planilha','err');
       }else{
-        // o servidor devolve o estado mesclado; aplica de volta para ficar igual à nuvem
         if(resp && resp.data && typeof resp.data==='object'){
           mergeDB(resp.data);
           if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}}
@@ -892,12 +888,7 @@ function doCloudSave(){
       }
     })
     .catch(()=>{
-      setSyncStatus('Sem conexão — tentando de novo…','err');
-      cloudPending=true; // marca para reenviar
-    })
-    .finally(()=>{
-      cloudBusy=false;
-      if(cloudPending)setTimeout(doCloudSave,1500); // reenvia o que ficou pendente
+      setSyncStatus('Sem conexão — toque aqui p/ reenviar','err');
     });
 }
 /* busca o DB da nuvem e mescla com o local (sem perder registros) */
@@ -2044,16 +2035,14 @@ buildLoginOptions();
 if(!STORAGE_OK){const w=$('#storageWarn');if(w)w.classList.remove('hidden');}
 // clicar no indicador de sincronização força uma atualização imediata da nuvem
 (function(){const el=$('#syncStatus');if(el){el.style.cursor='pointer';el.title='Clique para atualizar';
-  el.addEventListener('click',()=>{cloudLoad().then(u=>{if(u&&session){refreshAll();}});});}})();
-// ao fechar/recarregar a aba, tenta enviar o que ainda não foi salvo
+  el.addEventListener('click',()=>{flushCloudSave();cloudLoad().then(u=>{if(session){refreshAll();}});});}})();
+// ao fechar/recarregar a aba, envia uma última vez como rede de segurança
 window.addEventListener('beforeunload',()=>{
-  if(CLOUD_URL && cloudPending){
+  if(CLOUD_URL && session){
     try{
-      // sendBeacon garante o envio mesmo com a aba fechando
       const blob=new Blob([JSON.stringify({action:'save',data:DB})],{type:'text/plain;charset=utf-8'});
       navigator.sendBeacon(CLOUD_URL, blob);
-      cloudPending=false;
-    }catch(e){ flushCloudSave(); }
+    }catch(e){}
   }
 });
 // se a nuvem estiver configurada, busca os dados e atualiza as opções de login
