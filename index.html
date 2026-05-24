@@ -814,12 +814,12 @@ function setSyncStatus(txt,cls){
   const el=$('#syncStatus');if(!el)return;
   el.textContent=txt;el.className='sync-status '+(cls||'');
 }
-/* envia o DB para a nuvem, com "debounce" (agrupa gravações seguidas) */
+/* envia o DB para a nuvem, com "debounce" curto (agrupa gravações seguidas) */
 function cloudSave(){
   if(!CLOUD_URL)return;
   cloudPending=true;
   if(cloudTimer)clearTimeout(cloudTimer);
-  cloudTimer=setTimeout(doCloudSave,600);
+  cloudTimer=setTimeout(doCloudSave,300);
 }
 /* envia imediatamente, sem esperar o debounce (usado ao sair/fechar) */
 function flushCloudSave(){
@@ -832,14 +832,14 @@ function doCloudSave(){
   if(cloudBusy){return;} // tenta de novo quando a atual terminar
   cloudBusy=true;cloudPending=false;
   setSyncStatus('Salvando…','saving');
+  const snapshot=JSON.stringify(DB); // o que estamos tentando salvar
   fetch(CLOUD_URL,{
     method:'POST',
     headers:{'Content-Type':'text/plain;charset=utf-8'},
     body:JSON.stringify({action:'save',data:DB})
   }).then(r=>r.json().catch(()=>null)).then(resp=>{
     if(resp && resp.ok===false){
-      // o Apps Script respondeu, mas deu erro ao gravar (ex.: permissão)
-      setSyncStatus('Erro ao salvar na nuvem','err');
+      setSyncStatus('Erro ao salvar — verifique a planilha','err');
     }else{
       setSyncStatus('Salvo na nuvem ✓','ok');
     }
@@ -1904,7 +1904,7 @@ $('#q_salvar').addEventListener('click',()=>{
     registradoEm:new Date().toISOString()
   };
   if(!qTipo){toast('Selecione o tipo de quebra.','err');return;}
-  DB.quebras.push(q);saveDB();
+  DB.quebras.push(q);saveDB();flushCloudSave();
   // limpar
   $('#q_resp').value='';$('#q_func').value='';$('#q_codigo').value='';$('#q_qtd').value='';
   $('#q_fornecedor').value='';$('#q_nf').value='';$('#q_obs').value='';
