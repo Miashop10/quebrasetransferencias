@@ -2176,35 +2176,47 @@ if(CLOUD_URL){
 /* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
 window.rodarDiagnostico=function(){
   const locais = (DB.quebras||[]).slice();
-  setSyncStatus('Recuperando…','saving');
-  // envia cada quebra local individualmente (pacote mínimo, sem foto grande)
-  function enviarUma(i){
-    if(i>=locais.length){ verificar(); return; }
-    const q=Object.assign({},locais[i]);
-    if(q.foto && q.foto.length>200000) q.foto=null;
-    fetch(CLOUD_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body:JSON.stringify({action:'addQuebra',quebra:q,seq:DB.seq})})
-      .then(()=>{ setSyncStatus('Recuperando… '+(i+1)+'/'+locais.length,'saving'); })
-      .catch(()=>{})
-      .finally(()=>enviarUma(i+1));
-  }
-  function verificar(){
-    fetch(CLOUD_URL+'?action=load&t='+Date.now())
-      .then(r=>r.json())
-      .then(resp=>{
-        const nuvem=(resp&&resp.data&&resp.data.quebras)?resp.data.quebras.length:0;
-        const lista=(resp&&resp.data&&resp.data.quebras)?resp.data.quebras.map(q=>q.filial+': '+q.codigo).join('\n'):'(nenhuma)';
-        alert('DIAGNÓSTICO v9\n\n'
-          +'Quebras neste aparelho: '+locais.length+'\n'
-          +'Quebras na nuvem AGORA: '+nuvem+'\n\n'
-          +'Enviei as deste aparelho uma a uma.\n'
-          +(nuvem>=locais.length?'✓ Tudo sincronizado!':'Se ainda faltam, repita o diag.')+'\n\n'
-          +'Na nuvem:\n'+lista);
-        setSyncStatus('Salvo na nuvem ✓','ok');
-      })
-      .catch(e=>{ alert('DIAGNÓSTICO\n\nNÃO consegui ler a nuvem.\nErro: '+e); });
-  }
-  enviarUma(0);
+  let relatorio = 'DIAGNÓSTICO v9\n\n';
+  relatorio += 'Quebras neste aparelho: '+locais.length+'\n';
+  setSyncStatus('Testando…','saving');
+
+  // PASSO A: testa LEITURA da nuvem
+  fetch(CLOUD_URL+'?action=load&t='+Date.now())
+    .then(r=>r.json())
+    .then(resp=>{
+      const nuvemAntes=(resp&&resp.data&&resp.data.quebras)?resp.data.quebras.length:0;
+      relatorio += 'Quebras na nuvem (antes): '+nuvemAntes+'\n';
+      relatorio += 'LEITURA: OK ✓\n\n';
+
+      // PASSO B: tenta enviar UMA quebra de teste simples (sem foto)
+      const teste={id:'DIAG'+Date.now(), filial:'DIAG-TESTE', codigo:'DIAG-'+new Date().toLocaleTimeString(),
+        tipo:'Quebra na loja', data:new Date().toISOString().slice(0,10), registradoEm:new Date().toISOString()};
+      relatorio += 'Enviando quebra de teste (sem foto)…\n';
+
+      return fetch(CLOUD_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
+        body:JSON.stringify({action:'addQuebra',quebra:teste,seq:DB.seq})})
+        .then(r=>{
+          relatorio += 'POST respondeu: status '+r.status+'\n';
+          return r.json().catch(()=>{ relatorio+='(resposta não é JSON)\n'; return null; });
+        })
+        .then(resp2=>{
+          if(resp2 && resp2.ok===false){ relatorio += 'SERVIDOR RETORNOU ERRO: '+(resp2.error||'?')+'\n'; }
+          // PASSO C: relê para ver se a quebra de teste entrou
+          return fetch(CLOUD_URL+'?action=load&t='+Date.now()).then(r=>r.json()).then(resp3=>{
+            const nuvemDepois=(resp3&&resp3.data&&resp3.data.quebras)?resp3.data.quebras.length:0;
+            const entrou=(resp3&&resp3.data&&resp3.data.quebras)?resp3.data.quebras.some(q=>q.id===teste.id):false;
+            relatorio += 'Quebras na nuvem (depois): '+nuvemDepois+'\n';
+            relatorio += entrou ? '\n✓✓ A QUEBRA DE TESTE SUBIU! O envio funciona.\n'
+                                : '\n✗✗ A QUEBRA DE TESTE NÃO SUBIU. O servidor recebeu mas não gravou.\n';
+            alert(relatorio);
+            setSyncStatus(entrou?'Salvo na nuvem ✓':'Falha no envio','ok');
+          });
+        });
+    })
+    .catch(e=>{
+      relatorio += '\n✗ ERRO DE CONEXÃO: '+e+'\n\nO aparelho não conseguiu falar com a nuvem.';
+      alert(relatorio);
+    });
 };
 </script>
 </body>
