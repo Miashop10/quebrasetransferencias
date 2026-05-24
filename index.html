@@ -804,7 +804,7 @@ function saveDB(){
   if(STORAGE_OK){
     try{ localStorage.setItem(STORAGE_KEY,JSON.stringify(DB)); }catch(e){}
   }
-  cloudSave(); // envia para a nuvem (se configurada)
+  cloudSave(); // envia para a nuvem uma versão LEVE (sem fotos) — ver dbParaNuvem()
 }
 
 /* ===================== SINCRONIZAÇÃO COM A NUVEM (Google Sheets via Apps Script) =====================
@@ -878,15 +878,13 @@ function flushCloudSave(){
   if(cloudTimer)clearTimeout(cloudTimer);
   doCloudSave();
 }
-/* prepara o DB para enviar à nuvem.
-   Mantém as fotos (já comprimidas e pequenas), mas, por segurança, remove do envio
-   qualquer foto que esteja grande demais (acima de ~200KB), para nunca travar a
-   sincronização. A foto removida continua guardada localmente no aparelho. */
+/* prepara o DB para o envio em MASSA (ação 'save'): remove TODAS as fotos.
+   O envio em massa é só dos dados (texto), que é leve e nunca trava.
+   As fotos sobem uma a uma por enviarFotoAgora() e ficam guardadas na nuvem. */
 function dbParaNuvem(){
-  const LIMITE = 200000; // ~200 KB por foto
   const limpo=JSON.parse(JSON.stringify(DB));
-  (limpo.quebras||[]).forEach(q=>{ if(q.foto && q.foto.length>LIMITE){ q.foto=null; q._fotoGrande=true; } });
-  (limpo.transfers||[]).forEach(t=>{ if(t.foto && t.foto.length>LIMITE){ t.foto=null; t._fotoGrande=true; } });
+  (limpo.quebras||[]).forEach(q=>{ if(q.foto){ q.foto=null; } });
+  (limpo.transfers||[]).forEach(t=>{ if(t.foto){ t.foto=null; } });
   return limpo;
 }
 function doCloudSave(){
@@ -1099,7 +1097,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v9';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v10';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -2176,7 +2174,7 @@ if(CLOUD_URL){
 /* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
 window.rodarDiagnostico=function(){
   const locais = (DB.quebras||[]).slice();
-  let relatorio = 'DIAGNÓSTICO v9\n\n';
+  let relatorio = 'DIAGNÓSTICO v10\n\n';
   relatorio += 'Quebras neste aparelho: '+locais.length+'\n';
   setSyncStatus('Testando…','saving');
 
