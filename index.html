@@ -878,13 +878,14 @@ function flushCloudSave(){
   if(cloudTimer)clearTimeout(cloudTimer);
   doCloudSave();
 }
-/* prepara o DB para o envio em MASSA (ação 'save'): remove TODAS as fotos.
-   O envio em massa é só dos dados (texto), que é leve e nunca trava.
-   As fotos sobem uma a uma por enviarFotoAgora() e ficam guardadas na nuvem. */
+/* prepara o DB para o envio em MASSA (ação 'save').
+   Mantém LINKS de foto (curtos, do Drive) e remove apenas base64 gigante
+   (data:...), que sobe separado por enviarFotoAgora() -> Drive. */
 function dbParaNuvem(){
   const limpo=JSON.parse(JSON.stringify(DB));
-  (limpo.quebras||[]).forEach(q=>{ if(q.foto){ q.foto=null; } });
-  (limpo.transfers||[]).forEach(t=>{ if(t.foto){ t.foto=null; } });
+  const limpaBase64=o=>{ if(o.foto && String(o.foto).indexOf('data:')===0){ o.foto=null; } };
+  (limpo.quebras||[]).forEach(limpaBase64);
+  (limpo.transfers||[]).forEach(limpaBase64);
   return limpo;
 }
 function doCloudSave(){
@@ -972,7 +973,7 @@ function enviarTransferenciaAgora(t){
     setSyncStatus('Enviado — toque p/ confirmar','err');
   });
 }
-/* envia a foto de um registro SEPARADAMENTE (não trava o registro se falhar) */
+/* envia a foto de um registro SEPARADAMENTE (vai para o Drive; não trava se falhar) */
 function enviarFotoAgora(tipo, id, foto){
   if(!CLOUD_URL || !foto){return;}
   const payload=JSON.stringify({action:'addFoto',tipo:tipo,id:id,foto:foto});
@@ -981,6 +982,13 @@ function enviarFotoAgora(tipo, id, foto){
     headers:{'Content-Type':'text/plain;charset=utf-8'},
     body:payload
   }).then(r=>r.json().catch(()=>null)).then(resp=>{
+    // o servidor devolve o LINK da foto no Drive; adota o link no registro local
+    if(resp && resp.link){
+      const lista = tipo==='transfer' ? DB.transfers : DB.quebras;
+      const reg = (lista||[]).find(x=>x.id===id);
+      if(reg){ reg.foto = resp.link; }
+      if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}}
+    }
     if(resp && resp.data){ mergeDB(resp.data);
       if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}} }
   }).catch(()=>{}); // se a foto falhar, tudo bem: o registro já subiu
@@ -1097,7 +1105,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v10';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v12';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -2174,7 +2182,7 @@ if(CLOUD_URL){
 /* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
 window.rodarDiagnostico=function(){
   const locais = (DB.quebras||[]).slice();
-  let relatorio = 'DIAGNÓSTICO v10\n\n';
+  let relatorio = 'DIAGNÓSTICO v12\n\n';
   relatorio += 'Quebras neste aparelho: '+locais.length+'\n';
   setSyncStatus('Testando…','saving');
 
