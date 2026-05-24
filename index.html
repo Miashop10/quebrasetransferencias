@@ -869,38 +869,35 @@ function flushCloudSave(){
 }
 function doCloudSave(){
   if(!CLOUD_URL)return;
-  if(cloudBusy){return;} // tenta de novo quando a atual terminar
+  if(cloudBusy){cloudPending=true;return;} // tenta de novo quando a atual terminar
   cloudBusy=true;cloudPending=false;
   setSyncStatus('Salvando…','saving');
-  // 1) lê o que está na nuvem AGORA  2) mescla com o local  3) grava o resultado
-  fetch(CLOUD_URL+'?action=load&t='+Date.now())
-    .then(r=>r.json().catch(()=>null))
-    .then(resp=>{
-      if(resp && resp.data && typeof resp.data==='object'){
-        mergeDB(resp.data); // junta nuvem + local sem perder nada
-        if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}}
-      }
-    })
-    .catch(()=>{}) // se a leitura falhar, grava o local mesmo assim
-    .then(()=>fetch(CLOUD_URL,{
-      method:'POST',
-      headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body:JSON.stringify({action:'save',data:DB})
-    }))
+  // grava direto (o servidor/Apps Script faz o merge, então não precisa ler antes)
+  fetch(CLOUD_URL,{
+    method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body:JSON.stringify({action:'save',data:DB})
+  })
     .then(r=>r.json().catch(()=>null))
     .then(resp=>{
       if(resp && resp.ok===false){
         setSyncStatus('Erro ao salvar — verifique a planilha','err');
       }else{
+        // o servidor devolve o estado mesclado; aplica de volta para ficar igual à nuvem
+        if(resp && resp.data && typeof resp.data==='object'){
+          mergeDB(resp.data);
+          if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}}
+        }
         setSyncStatus('Salvo na nuvem ✓','ok');
       }
     })
     .catch(()=>{
-      setSyncStatus('Sem conexão — salvo só neste aparelho','err');
+      setSyncStatus('Sem conexão — tentando de novo…','err');
+      cloudPending=true; // marca para reenviar
     })
     .finally(()=>{
       cloudBusy=false;
-      if(cloudPending)doCloudSave(); // havia outra gravação esperando
+      if(cloudPending)setTimeout(doCloudSave,1500); // reenvia o que ficou pendente
     });
 }
 /* busca o DB da nuvem e mescla com o local (sem perder registros) */
@@ -2071,15 +2068,31 @@ window.rodarDiagnostico=function(){
   fetch(CLOUD_URL+'?action=load&t='+Date.now())
     .then(r=>r.json())
     .then(resp=>{
-      const nuvem = (resp&&resp.data&&resp.data.quebras)?resp.data.quebras.length:0;
-      const lista = (resp&&resp.data&&resp.data.quebras)?resp.data.quebras.map(q=>q.filial+': '+q.codigo).join('\n'):'(nenhuma)';
-      alert('DIAGNÓSTICO v3 (sync)\n\n'
-        +'Quebras neste aparelho: '+local+'\n'
-        +'Quebras na NUVEM: '+nuvem+'\n\n'
-        +'Quebras na nuvem:\n'+lista+'\n\n'
-        +'URL da nuvem termina em: ...'+CLOUD_URL.slice(-12));
+      const nuvemAntes = (resp&&resp.data&&resp.data.quebras)?resp.data.quebras.length:0;
+      // força o envio do que está neste aparelho para a nuvem
+      return fetch(CLOUD_URL,{
+        method:'POST',
+        headers:{'Content-Type':'text/plain;charset=utf-8'},
+        body:JSON.stringify({action:'save',data:DB})
+      }).then(r=>r.json().catch(()=>null)).then(saveResp=>{
+        // relê para confirmar
+        return fetch(CLOUD_URL+'?action=load&t='+Date.now()).then(r=>r.json()).then(resp2=>{
+          const nuvemDepois=(resp2&&resp2.data&&resp2.data.quebras)?resp2.data.quebras.length:0;
+          const lista=(resp2&&resp2.data&&resp2.data.quebras)?resp2.data.quebras.map(q=>q.filial+': '+q.codigo).join('\n'):'(nenhuma)';
+          const ok = saveResp && saveResp.ok!==false;
+          alert('DIAGNÓSTICO v3 (sync)\n\n'
+            +'Quebras neste aparelho: '+local+'\n'
+            +'Quebras na nuvem ANTES: '+nuvemAntes+'\n'
+            +'Tentei enviar as deste aparelho...\n'
+            +'Resposta do servidor: '+(ok?'OK ✓':'ERRO ✗')+'\n'
+            +'Quebras na nuvem AGORA: '+nuvemDepois+'\n\n'
+            +'Na nuvem:\n'+lista+'\n\n'
+            +'URL termina em: ...'+CLOUD_URL.slice(-12));
+          if(nuvemDepois>nuvemAntes||nuvemDepois>=local) setSyncStatus('Salvo na nuvem ✓','ok');
+        });
+      });
     })
-    .catch(e=>{ alert('DIAGNÓSTICO\n\nNÃO consegui ler a nuvem.\nErro: '+e+'\n\nIsso indica problema de conexão com o Apps Script.'); });
+    .catch(e=>{ alert('DIAGNÓSTICO\n\nNÃO consegui falar com a nuvem.\nErro: '+e+'\n\nVerifique a conexão/internet deste aparelho.'); });
 };
 </script>
 </body>
