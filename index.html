@@ -993,6 +993,18 @@ function enviarFotoAgora(tipo, id, foto){
       if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}} }
   }).catch(()=>{}); // se a foto falhar, tudo bem: o registro já subiu
 }
+/* apaga um registro DE VERDADE na nuvem (senão o merge o traria de volta) */
+function apagarNaNuvem(tipo, id){
+  if(!CLOUD_URL){return;}
+  fetch(CLOUD_URL,{
+    method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body:JSON.stringify({action:'del',tipo:tipo,id:id})
+  }).then(r=>r.json().catch(()=>null)).then(resp=>{
+    if(resp && resp.data){ mergeDB(resp.data);
+      if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}} }
+  }).catch(()=>{});
+}
 /* busca o DB da nuvem e mescla com o local (sem perder registros) */
 function cloudLoad(){
   if(!CLOUD_URL)return Promise.resolve(false);
@@ -1105,7 +1117,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v12';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v13';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -1676,7 +1688,7 @@ window.apagarLancQuebra=function(id){
     $('#qap_ok').addEventListener('click',()=>{
       const i=DB.quebras.findIndex(x=>x.id===id);
       if(i>=0)DB.quebras.splice(i,1);
-      saveDB();closeModal();toast('Quebra apagada definitivamente.','ok');
+      saveDB();apagarNaNuvem('quebra',id);closeModal();toast('Quebra apagada definitivamente.','ok');
       refreshAll();
     });
   });
@@ -1825,7 +1837,7 @@ window.apagarTransfer=function(id){
     $('#apt_ok').addEventListener('click',()=>{
       const i=DB.transfers.findIndex(x=>x.id===id);
       if(i>=0)DB.transfers.splice(i,1);
-      saveDB();closeModal();toast('Transferência apagada de todas as abas.','ok');
+      saveDB();apagarNaNuvem('transfer',id);closeModal();toast('Transferência apagada de todas as abas.','ok');
       refreshAll();
     });
   });
@@ -2182,7 +2194,7 @@ if(CLOUD_URL){
 /* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
 window.rodarDiagnostico=function(){
   const locais = (DB.quebras||[]).slice();
-  let relatorio = 'DIAGNÓSTICO v12\n\n';
+  let relatorio = 'DIAGNÓSTICO v13\n\n';
   relatorio += 'Quebras neste aparelho: '+locais.length+'\n';
   setSyncStatus('Testando…','saving');
 
