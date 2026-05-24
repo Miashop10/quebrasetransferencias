@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Teste de Nuvem</title>
+<style>
+  body{font-family:system-ui,Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;background:#f4f6fb;color:#1a2030}
+  h1{font-size:20px}
+  button{display:block;width:100%;padding:16px;margin:10px 0;font-size:17px;border:none;border-radius:12px;background:#ff6a3d;color:#fff;font-weight:700}
+  button.blue{background:#2563eb}
+  #log{background:#fff;border:1px solid #d8def0;border-radius:12px;padding:14px;margin-top:16px;white-space:pre-wrap;font-size:14px;line-height:1.5;min-height:120px}
+  .ok{color:#16a34a;font-weight:700}
+  .err{color:#dc2626;font-weight:700}
+</style>
+</head>
+<body>
+  <h1>Teste de Nuvem — Miashop</h1>
+  <p>Esta página testa se o seu navegador consegue LER e GRAVAR na nuvem (Google Apps Script). Toque nos botões na ordem.</p>
+
+  <button onclick="testarLeitura()">1 — Testar LEITURA da nuvem</button>
+  <button class="blue" onclick="testarGravacao()">2 — Testar GRAVAÇÃO na nuvem</button>
+
+  <div id="log">Os resultados aparecerão aqui...</div>
+
+<script>
+// MESMA URL do sistema:
+const CLOUD_URL = "https://script.google.com/macros/s/AKfycbxrDcEVodBObGg7xtr1-yZn4qLJcZl4DK-QGS0C9ES9E1dLr-yHGvzI04anlb1mNrri/exec";
+
+function log(msg, cls){
+  const el=document.getElementById('log');
+  const span=cls?`<span class="${cls}">${msg}</span>`:msg;
+  el.innerHTML = span + "\n\n" + el.innerHTML;
+}
+
+function testarLeitura(){
+  log("⏳ Lendo a nuvem...");
+  fetch(CLOUD_URL+'?action=load&t='+Date.now())
+    .then(r=>r.json())
+    .then(resp=>{
+      const n = (resp&&resp.data&&resp.data.quebras)?resp.data.quebras.length:0;
+      log("✓ LEITURA OK. Quebras na nuvem: "+n, "ok");
+    })
+    .catch(e=>{
+      log("✗ LEITURA FALHOU: "+e+"\nO navegador não conseguiu nem LER a nuvem. Pode ser internet ou bloqueio de rede.", "err");
+    });
+}
+
+function testarGravacao(){
+  log("⏳ Tentando GRAVAR uma quebra de teste...");
+  const teste = {
+    action:'save',
+    data:{ master:'HERA', filiais:{}, transfers:[], lancamentos:[],
+           quebras:[{ id:'QBPAGINA'+Date.now(), filial:'TESTE-PAGINA', codigo:'GRAVOU-DO-NAVEGADOR', registradoEm:new Date().toISOString() }],
+           fornecedores:[], seq:1000 }
+  };
+  fetch(CLOUD_URL,{
+    method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body:JSON.stringify(teste)
+  })
+    .then(r=>r.json().catch(()=>null))
+    .then(resp=>{
+      if(resp && resp.ok!==false){
+        const n=(resp.data&&resp.data.quebras)?resp.data.quebras.length:'?';
+        log("✓✓✓ GRAVAÇÃO FUNCIONOU! O servidor respondeu OK. Quebras na nuvem agora: "+n+"\nIsto significa que ESTE navegador CONSEGUE gravar na nuvem.", "ok");
+      }else{
+        log("✗ O servidor respondeu, mas com ERRO: "+JSON.stringify(resp)+"\nIsto indica problema de permissão no Apps Script (Executar como).", "err");
+      }
+    })
+    .catch(e=>{
+      log("✗✗✗ GRAVAÇÃO FALHOU: "+e+"\nO navegador ENVIOU mas não recebeu resposta. Isto costuma ser bloqueio de rede/CORS NESTE navegador ou aparelho.", "err");
+    });
+}
+</script>
+</body>
+</html>
