@@ -951,6 +951,34 @@ function enviarQuebraAgora(q){
     setSyncStatus('Enviado — toque p/ confirmar','err');
   });
 }
+/* envia UMA transferência individualmente (pacote mínimo, igual às quebras) */
+function enviarTransferenciaAgora(t){
+  if(!CLOUD_URL){return;}
+  setSyncStatus('Salvando…','saving');
+  const tLeve=Object.assign({},t);
+  if(tLeve.foto && tLeve.foto.length>200000){ tLeve.foto=null; }
+  const payload=JSON.stringify({action:'addTransfer',transfer:tLeve,seq:DB.seq});
+  fetch(CLOUD_URL,{
+    method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body:payload
+  })
+  .then(r=>r.json().catch(()=>null))
+  .then(resp=>{
+    if(resp && resp.data && typeof resp.data==='object'){
+      mergeDB(resp.data);
+      if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}}
+      const chegou=(resp.data.transfers||[]).some(x=>x.id===t.id);
+      setSyncStatus(chegou?'Salvo na nuvem ✓':'Salvo (sincronizando…)', 'ok');
+    }else{
+      setSyncStatus('Salvo na nuvem ✓','ok');
+    }
+  })
+  .catch(()=>{
+    try{ navigator.sendBeacon(CLOUD_URL, new Blob([payload],{type:'text/plain;charset=utf-8'})); }catch(e){}
+    setSyncStatus('Enviado — toque p/ confirmar','err');
+  });
+}
 /* busca o DB da nuvem e mescla com o local (sem perder registros) */
 function cloudLoad(){
   if(!CLOUD_URL)return Promise.resolve(false);
@@ -1063,7 +1091,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v7';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v8';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -1193,6 +1221,7 @@ $('#t_enviar').addEventListener('click',()=>{
   };
   DB.transfers.push(t);
   saveDB();
+  enviarTransferenciaAgora(t);
   // limpar form
   $('#t_nome').value='';$('#t_codigo').value='';$('#t_qtd').value='';
   $('#t_foto_cam').value='';$('#t_foto_file').value='';
@@ -2157,7 +2186,7 @@ window.rodarDiagnostico=function(){
       .then(resp=>{
         const nuvem=(resp&&resp.data&&resp.data.quebras)?resp.data.quebras.length:0;
         const lista=(resp&&resp.data&&resp.data.quebras)?resp.data.quebras.map(q=>q.filial+': '+q.codigo).join('\n'):'(nenhuma)';
-        alert('DIAGNÓSTICO v7\n\n'
+        alert('DIAGNÓSTICO v8\n\n'
           +'Quebras neste aparelho: '+locais.length+'\n'
           +'Quebras na nuvem AGORA: '+nuvem+'\n\n'
           +'Enviei as deste aparelho uma a uma.\n'
