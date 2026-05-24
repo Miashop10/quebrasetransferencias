@@ -814,6 +814,46 @@ function setSyncStatus(txt,cls){
   const el=$('#syncStatus');if(!el)return;
   el.textContent=txt;el.className='sync-status '+(cls||'');
 }
+/* junta dois arrays de registros por id, sem duplicar e sem perder nada.
+   Em caso de mesmo id, mantém a versão com a data de modificação mais recente. */
+function mergeById(localArr, nuvemArr, dateKey){
+  localArr=Array.isArray(localArr)?localArr:[];
+  nuvemArr=Array.isArray(nuvemArr)?nuvemArr:[];
+  const map={};
+  const stamp=o=>{
+    // usa a marca temporal mais relevante para decidir quem é mais novo
+    const d = (o&&(o[dateKey]||o.registradoEm||(o.lanc&&o.lanc.registradoEm)||o.recebidoEm||o.enviadoEm)) || '';
+    return d ? new Date(d).getTime() : 0;
+  };
+  nuvemArr.forEach(o=>{ if(o&&o.id) map[o.id]=o; });
+  localArr.forEach(o=>{
+    if(!o||!o.id){return;}
+    if(!map[o.id]){ map[o.id]=o; }
+    else {
+      // mesmo id nos dois: fica o mais recente
+      map[o.id] = stamp(o) >= stamp(map[o.id]) ? o : map[o.id];
+    }
+  });
+  return Object.keys(map).map(k=>map[k]);
+}
+/* combina o DB local com o DB vindo da nuvem, preservando registros dos dois lados */
+function mergeDB(nuvem){
+  if(!nuvem || typeof nuvem!=='object') return;
+  // listas: junta por id (nada se perde)
+  DB.transfers   = mergeById(DB.transfers,   nuvem.transfers,   'enviadoEm');
+  DB.quebras     = mergeById(DB.quebras,     nuvem.quebras,     'registradoEm');
+  DB.lancamentos = mergeById(DB.lancamentos, nuvem.lancamentos, 'data');
+  // filiais: a nuvem manda (cadastro central feito pelo master), mas mantém as que só existem local
+  DB.filiais = Object.assign({}, DB.filiais||{}, nuvem.filiais||{});
+  // fornecedores: união sem duplicar
+  const fset={}; (DB.fornecedores||[]).concat(nuvem.fornecedores||[]).forEach(f=>{if(f)fset[f]=1;});
+  DB.fornecedores = Object.keys(fset);
+  // master e cdNome: a nuvem prevalece se existir
+  if(nuvem.master) DB.master = nuvem.master;
+  if(nuvem.cdNome){ DB.cdNome = nuvem.cdNome; CD_NOME = nuvem.cdNome; }
+  // seq: usa o maior para não repetir ids
+  DB.seq = Math.max(DB.seq||1000, nuvem.seq||1000); seq = DB.seq;
+}
 /* envia o DB para a nuvem, com "debounce" curto (agrupa gravações seguidas) */
 function cloudSave(){
   if(!CLOUD_URL)return;
@@ -832,25 +872,38 @@ function doCloudSave(){
   if(cloudBusy){return;} // tenta de novo quando a atual terminar
   cloudBusy=true;cloudPending=false;
   setSyncStatus('Salvando…','saving');
-  const snapshot=JSON.stringify(DB); // o que estamos tentando salvar
-  fetch(CLOUD_URL,{
-    method:'POST',
-    headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body:JSON.stringify({action:'save',data:DB})
-  }).then(r=>r.json().catch(()=>null)).then(resp=>{
-    if(resp && resp.ok===false){
-      setSyncStatus('Erro ao salvar — verifique a planilha','err');
-    }else{
-      setSyncStatus('Salvo na nuvem ✓','ok');
-    }
-  }).catch(()=>{
-    setSyncStatus('Sem conexão — salvo só neste aparelho','err');
-  }).finally(()=>{
-    cloudBusy=false;
-    if(cloudPending)doCloudSave(); // havia outra gravação esperando
-  });
+  // 1) lê o que está na nuvem AGORA  2) mescla com o local  3) grava o resultado
+  fetch(CLOUD_URL+'?action=load&t='+Date.now())
+    .then(r=>r.json().catch(()=>null))
+    .then(resp=>{
+      if(resp && resp.data && typeof resp.data==='object'){
+        mergeDB(resp.data); // junta nuvem + local sem perder nada
+        if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}}
+      }
+    })
+    .catch(()=>{}) // se a leitura falhar, grava o local mesmo assim
+    .then(()=>fetch(CLOUD_URL,{
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body:JSON.stringify({action:'save',data:DB})
+    }))
+    .then(r=>r.json().catch(()=>null))
+    .then(resp=>{
+      if(resp && resp.ok===false){
+        setSyncStatus('Erro ao salvar — verifique a planilha','err');
+      }else{
+        setSyncStatus('Salvo na nuvem ✓','ok');
+      }
+    })
+    .catch(()=>{
+      setSyncStatus('Sem conexão — salvo só neste aparelho','err');
+    })
+    .finally(()=>{
+      cloudBusy=false;
+      if(cloudPending)doCloudSave(); // havia outra gravação esperando
+    });
 }
-/* busca o DB da nuvem e atualiza a tela */
+/* busca o DB da nuvem e mescla com o local (sem perder registros) */
 function cloudLoad(){
   if(!CLOUD_URL)return Promise.resolve(false);
   setSyncStatus('Carregando…','saving');
@@ -858,17 +911,7 @@ function cloudLoad(){
     .then(r=>r.json())
     .then(resp=>{
       if(resp && resp.data && typeof resp.data==='object'){
-        const obj=resp.data;
-        const merged=Object.assign({},DEFAULT_DB,obj,{
-          filiais:obj.filiais||DEFAULT_DB.filiais,
-          quebras:obj.quebras||[],
-          fornecedores:obj.fornecedores||[]
-        });
-        // aplica no DB atual
-        Object.keys(DB).forEach(k=>{delete DB[k];});
-        Object.assign(DB,merged);
-        seq=DB.seq||seq;
-        if(DB.cdNome)CD_NOME=DB.cdNome;
+        mergeDB(resp.data); // junta nuvem + local, mantém o que houver dos dois lados
         if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}}
         setSyncStatus('Salvo na nuvem ✓','ok');
         return true;
@@ -971,7 +1014,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial);
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v3 (sync)';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -2005,7 +2048,16 @@ if(!STORAGE_OK){const w=$('#storageWarn');if(w)w.classList.remove('hidden');}
 (function(){const el=$('#syncStatus');if(el){el.style.cursor='pointer';el.title='Clique para atualizar';
   el.addEventListener('click',()=>{cloudLoad().then(u=>{if(u&&session){refreshAll();}});});}})();
 // ao fechar/recarregar a aba, tenta enviar o que ainda não foi salvo
-window.addEventListener('beforeunload',()=>{ if(CLOUD_URL && cloudPending){ flushCloudSave(); } });
+window.addEventListener('beforeunload',()=>{
+  if(CLOUD_URL && cloudPending){
+    try{
+      // sendBeacon garante o envio mesmo com a aba fechando
+      const blob=new Blob([JSON.stringify({action:'save',data:DB})],{type:'text/plain;charset=utf-8'});
+      navigator.sendBeacon(CLOUD_URL, blob);
+      cloudPending=false;
+    }catch(e){ flushCloudSave(); }
+  }
+});
 // se a nuvem estiver configurada, busca os dados e atualiza as opções de login
 if(CLOUD_URL){
   cloudLoad().then(updated=>{ if(updated){ buildLoginOptions(); } });
