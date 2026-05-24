@@ -815,28 +815,30 @@ function setSyncStatus(txt,cls){
   el.textContent=txt;el.className='sync-status '+(cls||'');
 }
 /* junta dois arrays de registros por id, sem duplicar e sem perder nada.
-   Em caso de mesmo id, mantém a versão com a data de modificação mais recente.
-   A FOTO é tratada à parte: como ela não trafega pela nuvem, preservamos a foto
-   que existir localmente (no aparelho que a registrou). */
+   Em caso de mesmo id, escolhe a versão mais "completa/recente": considera tanto
+   a data do registro quanto a data do lançamento (lanc), para que o descarte/lançamento
+   feito pelo MASTER nunca seja perdido na junção.
+   A FOTO é tratada à parte: preservamos a que existir em qualquer um dos lados. */
 function mergeById(localArr, nuvemArr, dateKey){
   localArr=Array.isArray(localArr)?localArr:[];
   nuvemArr=Array.isArray(nuvemArr)?nuvemArr:[];
-  const fotos={}; // guarda a foto local de cada id
-  localArr.forEach(o=>{ if(o&&o.id&&o.foto) fotos[o.id]=o.foto; });
+  const fotos={}; // guarda a foto (de qualquer lado) por id
+  localArr.concat(nuvemArr).forEach(o=>{ if(o&&o.id&&o.foto) fotos[o.id]=o.foto; });
   const map={};
-  const stamp=o=>{
-    const d = (o&&(o[dateKey]||o.registradoEm||(o.lanc&&o.lanc.registradoEm)||o.recebidoEm||o.enviadoEm)) || '';
-    return d ? new Date(d).getTime() : 0;
+  const t=v=>{ const d=v?new Date(v).getTime():0; return isNaN(d)?0:d; };
+  // "peso" de uma versão: prioriza quem tem lançamento, depois a data mais recente
+  const score=o=>{
+    if(!o)return -1;
+    const base=Math.max(t(o[dateKey]), t(o.registradoEm), t(o.recebidoEm), t(o.enviadoEm));
+    const lanc=(o.lanc)?Math.max(t(o.lanc.registradoEm), t(o.lanc.data))+1e15:0; // bônus grande se há lançamento
+    return base+lanc;
   };
-  nuvemArr.forEach(o=>{ if(o&&o.id) map[o.id]=o; });
-  localArr.forEach(o=>{
-    if(!o||!o.id){return;}
-    if(!map[o.id]){ map[o.id]=o; }
-    else {
-      map[o.id] = stamp(o) >= stamp(map[o.id]) ? o : map[o.id];
-    }
+  const por=arr=>arr.forEach(o=>{
+    if(!o||!o.id)return;
+    if(!map[o.id] || score(o)>=score(map[o.id])) map[o.id]=o;
   });
-  // devolve a foto local para quem ficou sem (a nuvem nunca tem foto)
+  por(nuvemArr); por(localArr);
+  // devolve a foto para quem ficou sem
   return Object.keys(map).map(k=>{
     const o=map[k];
     if(o && !o.foto && fotos[k]){ o.foto=fotos[k]; }
@@ -1056,7 +1058,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v5';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v6';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
