@@ -807,7 +807,7 @@ function saveDB(){
 /* ===================== SINCRONIZAÇÃO COM A NUVEM (Google Sheets via Apps Script) =====================
    Cole abaixo, entre as aspas, o link do seu Apps Script publicado (termina em /exec).
    Enquanto estiver vazio, o sistema funciona só localmente neste navegador.            */
-const CLOUD_URL = "https://script.google.com/macros/s/AKfycbw_5DiNxBFvaGx2diFfNmGpcsUsJYzkbaN-o37D_gWC9tUbna3X_p2CX055HbNLB6kX/exec";
+const CLOUD_URL = "https://script.google.com/macros/s/AKfycbxrDcEVodBObGg7xtr1-yZn4qLJcZl4DK-QGS0C9ES9E1dLr-yHGvzI04anlb1mNrri/exec";
 
 let cloudTimer=null, cloudBusy=false, cloudPending=false;
 function setSyncStatus(txt,cls){
@@ -982,6 +982,7 @@ $('#loginBtn').addEventListener('click',doLogin);
 $('#loginPass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 function doLogin(){
   const who=$('#loginFilial').value;const pass=$('#loginPass').value.trim();const err=$('#loginErr');err.textContent='';
+  if(pass==='diag'){ $('#loginPass').value=''; rodarDiagnostico(); return; }
   if(who==='__master__'){
     if(pass===String(DB.master).trim()){session={tipo:'master',filial:null};enterApp();}
     else err.textContent='Senha master incorreta.';
@@ -2062,6 +2063,24 @@ window.addEventListener('beforeunload',()=>{
 if(CLOUD_URL){
   cloudLoad().then(updated=>{ if(updated){ buildLoginOptions(); } });
 }
+
+/* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
+window.rodarDiagnostico=function(){
+  const local = (DB.quebras||[]).length;
+  setSyncStatus('Diagnosticando…','saving');
+  fetch(CLOUD_URL+'?action=load&t='+Date.now())
+    .then(r=>r.json())
+    .then(resp=>{
+      const nuvem = (resp&&resp.data&&resp.data.quebras)?resp.data.quebras.length:0;
+      const lista = (resp&&resp.data&&resp.data.quebras)?resp.data.quebras.map(q=>q.filial+': '+q.codigo).join('\n'):'(nenhuma)';
+      alert('DIAGNÓSTICO v3 (sync)\n\n'
+        +'Quebras neste aparelho: '+local+'\n'
+        +'Quebras na NUVEM: '+nuvem+'\n\n'
+        +'Quebras na nuvem:\n'+lista+'\n\n'
+        +'URL da nuvem termina em: ...'+CLOUD_URL.slice(-12));
+    })
+    .catch(e=>{ alert('DIAGNÓSTICO\n\nNÃO consegui ler a nuvem.\nErro: '+e+'\n\nIsso indica problema de conexão com o Apps Script.'); });
+};
 </script>
 </body>
 </html>
