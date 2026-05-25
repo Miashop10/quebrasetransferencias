@@ -1117,7 +1117,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v13';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v14';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -1292,13 +1292,23 @@ function inDateRange(iso,de,ate){
   if(!iso)return false;const d=iso.slice(0,10);
   if(de&&d<de)return false;if(ate&&d>ate)return false;return true;
 }
+/* normaliza o link da foto para um formato que exibe bem em <img>.
+   Converte links antigos do Drive (uc?export=view) para o formato thumbnail. */
+function fotoSrc(foto){
+  if(!foto) return '';
+  const m = String(foto).match(/[?&]id=([^&]+)/);
+  if(m && foto.indexOf('drive.google.com')>=0){
+    return 'https://drive.google.com/thumbnail?id='+m[1]+'&sz=w1200';
+  }
+  return foto; // base64 local ou link já no formato certo
+}
 function thumbCell(foto,id){
-  if(foto)return `<img class="thumb" src="${foto}" onclick="viewPhoto('${id}')">`;
+  if(foto)return `<img class="thumb" src="${fotoSrc(foto)}" onclick="viewPhoto('${id}')">`;
   return `<span class="thumb empty">s/foto</span>`;
 }
 window.viewPhoto=function(id){
   const t=DB.transfers.find(x=>x.id===id);if(!t||!t.foto)return;
-  openModal(`<h3>${txt(t.nome)} — ${esc(t.codigo||'sem código')}</h3><img class="modal-img" src="${t.foto}"><div class="row-actions" style="margin-top:16px"><button class="btn ghost" onclick="closeModal()">Fechar</button></div>`);
+  openModal(`<h3>${txt(t.nome)} — ${esc(t.codigo||'sem código')}</h3><img class="modal-img" src="${fotoSrc(t.foto)}"><div class="row-actions" style="margin-top:16px"><button class="btn ghost" onclick="closeModal()">Fechar</button></div>`);
 };
 
 function renderV2(){
@@ -1567,7 +1577,7 @@ function renderLancQuebras(){
       const l=q.lanc||{};
       const desc=l.descarte||'';
       const obsHidden=(desc==='Avaria'||desc==='Consertar')?'':'hidden';
-      const fotoCell = q.foto ? `<img class="thumb" src="${q.foto}" onclick="qViewPhoto('${q.id}')">` : `<span class="thumb empty">s/foto</span>`;
+      const fotoCell = q.foto ? `<img class="thumb" src="${fotoSrc(q.foto)}" onclick="qViewPhoto('${q.id}')">` : `<span class="thumb empty">s/foto</span>`;
       tb.innerHTML+=`<tr>
         <td>${fotoCell}</td>
         <td><strong>${txt(q.codigo)}</strong></td>
@@ -2115,7 +2125,7 @@ function tipoBadge(t){
 }
 window.qViewPhoto=function(id){
   const q=DB.quebras.find(x=>x.id===id);if(!q||!q.foto)return;
-  openModal(`<h3>Quebra — ${txt(q.codigo)}</h3><img class="modal-img" src="${q.foto}"><div class="row-actions" style="margin-top:16px"><button class="btn ghost" onclick="closeModal()">Fechar</button></div>`);
+  openModal(`<h3>Quebra — ${txt(q.codigo)}</h3><img class="modal-img" src="${fotoSrc(q.foto)}"><div class="row-actions" style="margin-top:16px"><button class="btn ghost" onclick="closeModal()">Fechar</button></div>`);
 };
 function renderQuebras(){
   // filtros do histórico só aparecem para o MASTER
@@ -2132,7 +2142,7 @@ function renderQuebras(){
   const tb=$('#tblQuebras tbody');tb.innerHTML='';
   if(!list.length){tb.innerHTML=`<tr><td colspan="12"><div class="empty-state">Nenhuma quebra registrada.</div></td></tr>`;return;}
   list.forEach(q=>{
-    const fotoCell = q.foto ? `<img class="thumb" src="${q.foto}" onclick="qViewPhoto('${q.id}')">` : `<span class="thumb empty">s/foto</span>`;
+    const fotoCell = q.foto ? `<img class="thumb" src="${fotoSrc(q.foto)}" onclick="qViewPhoto('${q.id}')">` : `<span class="thumb empty">s/foto</span>`;
     const l=q.lanc||{};
     const descCell = l.descarte ? (`<strong>${esc(l.descarte)}</strong>` + (l.descObs?`<div class="muted" style="font-size:11px">${esc(l.descObs)}</div>`:'')) : '—';
     tb.innerHTML+=`<tr>
@@ -2194,7 +2204,7 @@ if(CLOUD_URL){
 /* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
 window.rodarDiagnostico=function(){
   const locais = (DB.quebras||[]).slice();
-  let relatorio = 'DIAGNÓSTICO v13\n\n';
+  let relatorio = 'DIAGNÓSTICO v14\n\n';
   relatorio += 'Quebras neste aparelho: '+locais.length+'\n';
   setSyncStatus('Testando…','saving');
 
