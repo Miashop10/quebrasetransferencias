@@ -829,12 +829,14 @@ function mergeById(localArr, nuvemArr, dateKey){
   localArr.concat(nuvemArr).forEach(o=>{ if(o&&o.id&&o.foto) fotos[o.id]=o.foto; });
   const map={};
   const t=v=>{ const d=v?new Date(v).getTime():0; return isNaN(d)?0:d; };
-  // "peso" de uma versão: prioriza quem tem lançamento, depois a data mais recente
+  // "peso" de uma versão: a ação mais recente sobre o lançamento (lançar OU remover) vence
   const score=o=>{
     if(!o)return -1;
     const base=Math.max(t(o[dateKey]), t(o.registradoEm), t(o.recebidoEm), t(o.enviadoEm));
-    const lanc=(o.lanc)?Math.max(t(o.lanc.registradoEm), t(o.lanc.data))+1e15:0; // bônus grande se há lançamento
-    return base+lanc;
+    const acaoLanc=(o.lanc)?Math.max(t(o.lanc.registradoEm), t(o.lanc.data)):0;
+    const acaoRemocao=t(o._semLanc);
+    const maisRecente=Math.max(acaoLanc, acaoRemocao);
+    return base+(maisRecente>0?maisRecente+1e15:0);
   };
   const por=arr=>arr.forEach(o=>{
     if(!o||!o.id)return;
@@ -1005,6 +1007,18 @@ function apagarNaNuvem(tipo, id){
       if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}} }
   }).catch(()=>{});
 }
+/* remove só o LANÇAMENTO na nuvem, mantendo o registro (senão o merge o traz de volta) */
+function apagarLancNaNuvem(tipo, id){
+  if(!CLOUD_URL){return;}
+  fetch(CLOUD_URL,{
+    method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body:JSON.stringify({action:'delLanc',tipo:tipo,id:id})
+  }).then(r=>r.json().catch(()=>null)).then(resp=>{
+    if(resp && resp.data){ mergeDB(resp.data);
+      if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}} }
+  }).catch(()=>{});
+}
 /* busca o DB da nuvem e mescla com o local (sem perder registros) */
 function cloudLoad(){
   if(!CLOUD_URL)return Promise.resolve(false);
@@ -1117,7 +1131,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v15';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v16';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -1773,7 +1787,7 @@ window.apagarLanc=function(id){
         <button class="btn ghost" onclick="closeModal()">Cancelar</button>
       </div>`);
     $('#ap_ok').addEventListener('click',()=>{
-      delete t.lanc;saveDB();closeModal();toast('Lançamento apagado.','ok');renderV4();
+      delete t.lanc;t._semLanc=new Date().toISOString();saveDB();apagarLancNaNuvem('transfer',id);closeModal();toast('Lançamento apagado.','ok');renderV4();
     });
   });
 };
@@ -2204,7 +2218,7 @@ if(CLOUD_URL){
 /* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
 window.rodarDiagnostico=function(){
   const locais = (DB.quebras||[]).slice();
-  let relatorio = 'DIAGNÓSTICO v15\n\n';
+  let relatorio = 'DIAGNÓSTICO v16\n\n';
   relatorio += 'Quebras neste aparelho: '+locais.length+'\n';
   setSyncStatus('Testando…','saving');
 
