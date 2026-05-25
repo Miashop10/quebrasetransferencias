@@ -1117,7 +1117,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v14';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v15';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -2204,7 +2204,7 @@ if(CLOUD_URL){
 /* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
 window.rodarDiagnostico=function(){
   const locais = (DB.quebras||[]).slice();
-  let relatorio = 'DIAGNÓSTICO v14\n\n';
+  let relatorio = 'DIAGNÓSTICO v15\n\n';
   relatorio += 'Quebras neste aparelho: '+locais.length+'\n';
   setSyncStatus('Testando…','saving');
 
