@@ -179,6 +179,9 @@ th{
 td{padding:10px 11px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
 tr:last-child td{border-bottom:none}
 tbody tr:hover{background:var(--panel-2)}
+tbody tr.total-row{background:var(--panel-2)}
+tbody tr.total-row:hover{background:var(--panel-2)}
+tbody tr.total-row td{border-top:2px solid var(--line)}
 .muted{color:var(--ink-faint)}
 .thumb{
   width:42px;height:42px;border-radius:8px;object-fit:cover;background:var(--panel-2);
@@ -832,7 +835,7 @@ function mergeById(localArr, nuvemArr, dateKey){
   // "peso" de uma versão: a ação mais recente sobre o lançamento (lançar OU remover) vence
   const score=o=>{
     if(!o)return -1;
-    const base=Math.max(t(o[dateKey]), t(o.registradoEm), t(o.recebidoEm), t(o.enviadoEm));
+    const base=Math.max(t(o[dateKey]), t(o.registradoEm), t(o.recebidoEm), t(o.enviadoEm), t(o.editadoEm));
     const acaoLanc=(o.lanc)?Math.max(t(o.lanc.registradoEm), t(o.lanc.data)):0;
     const acaoRemocao=t(o._semLanc);
     const maisRecente=Math.max(acaoLanc, acaoRemocao);
@@ -1049,6 +1052,12 @@ const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 function toast(msg, type){const t=$('#toast');t.textContent=msg;t.className='';t.classList.add('show');if(type)t.classList.add(type);setTimeout(()=>t.classList.remove('show'),2600);}
 function fmtMoney(n){if(n==null||n==='')return '—';return 'R$ '+Number(n).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
+/* custo total da linha = quantidade × valor unitário. Se não há valor, retorna null. */
+function custoTotal(qtd, valorUnit){
+  if(valorUnit==null || valorUnit==='') return null;
+  const q = (qtd==null || qtd==='') ? 1 : Number(qtd); // sem quantidade, assume 1
+  return Number(valorUnit) * q;
+}
 function fmtDate(iso){if(!iso)return '—';const d=new Date(iso);return d.toLocaleDateString('pt-BR');}
 function fmtDateTime(iso){if(!iso)return '—';const d=new Date(iso);return d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
 function daysSince(iso){return Math.floor((Date.now()-new Date(iso).getTime())/(1000*60*60*24));}
@@ -1131,7 +1140,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v16';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v19';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -1564,17 +1573,26 @@ function renderV4(){
   const comLanc=sortByRota(comLancBase,'enviadoEm');
   const hb=$('#tbl4hist tbody');hb.innerHTML='';
   if(!comLanc.length){hb.innerHTML=`<tr><td colspan="7"><div class="empty-state">Nenhum lançamento para os filtros selecionados.</div></td></tr>`;}
+  let totalT=0;
   comLanc.forEach(t=>{
     const l=t.lanc;
+    const ct=custoTotal(t.qtd,l.valor); // qtd × valor unitário
+    if(ct!=null)totalT+=ct;
     hb.innerHTML+=`<tr>
       <td><strong>${txt(t.nome)}</strong></td>
       <td>${esc(t.origem)} <span class="muted">→</span> ${esc(t.destino)}</td>
       <td>${txt(l.numero)}</td>
-      <td>${l.valor!=null?fmtMoney(l.valor):'—'}</td>
+      <td>${ct!=null?fmtMoney(ct):'—'}</td>
       <td>${l.data?fmtDate(l.data):'—'}</td>
       <td class="muted">${fmtDateTime(l.registradoEm)}</td>
       <td style="white-space:nowrap"><button class="btn ghost sm" onclick="editarTransfer('${t.id}')">Editar</button> <button class="btn danger sm" onclick="apagarTransfer('${t.id}')">Apagar</button></td></tr>`;
   });
+  if(comLanc.length){
+    hb.innerHTML+=`<tr class="total-row">
+      <td colspan="3" style="text-align:right;font-weight:700">Valor total:</td>
+      <td style="font-weight:700;color:var(--accent)">${fmtMoney(totalT)}</td>
+      <td colspan="3"></td></tr>`;
+  }
   renderLancQuebras();
 }
 
@@ -1619,7 +1637,11 @@ function renderLancQuebras(){
             <textarea id="qln_obs_${q.id}" rows="2" placeholder="Observações" style="${inS};min-width:140px">${esc(l.descObs||'')}</textarea>
           </div>
         </td>
-        <td><button class="btn sm" onclick="salvarLancQuebra('${q.id}')">Salvar</button></td></tr>`;
+        <td style="white-space:nowrap">
+          <button class="btn sm" onclick="salvarLancQuebra('${q.id}')">Salvar</button>
+          <button class="btn ghost sm" onclick="editarQuebraReg('${q.id}')">Editar</button>
+          <button class="btn danger sm" onclick="apagarLancQuebra('${q.id}')">Apagar</button>
+        </td></tr>`;
     });
   }
   // histórico: quebras COM lançamento (com filtros)
@@ -1634,8 +1656,11 @@ function renderLancQuebras(){
   const comLanc=sortByFilialData(comLancBase,'data');
   const hb=$('#tbl4qhist tbody');if(hb){hb.innerHTML='';
     if(!comLanc.length){hb.innerHTML=`<tr><td colspan="10"><div class="empty-state">Nenhum lançamento de quebra para os filtros selecionados.</div></td></tr>`;}
+    let totalQ=0;
     comLanc.forEach(q=>{
       const l=q.lanc;
+      const ct=custoTotal(q.qtd,l.valor); // qtd × valor unitário
+      if(ct!=null)totalQ+=ct;
       const descCell = l.descarte ? (esc(l.descarte) + (l.descObs?`<div class="muted" style="font-size:11px">${esc(l.descObs)}</div>`:'')) : '—';
       hb.innerHTML+=`<tr>
         <td><strong>${txt(q.codigo)}</strong></td>
@@ -1643,12 +1668,18 @@ function renderLancQuebras(){
         <td>${esc(q.filial)}</td>
         <td>${q.qtd!=null?q.qtd:'—'}</td>
         <td>${txt(l.numero)}</td>
-        <td>${l.valor!=null?fmtMoney(l.valor):'—'}</td>
+        <td>${ct!=null?fmtMoney(ct):'—'}</td>
         <td>${l.data?fmtDate(l.data):'—'}</td>
         <td>${descCell}</td>
         <td class="muted">${fmtDateTime(l.registradoEm)}</td>
         <td style="white-space:nowrap"><button class="btn ghost sm" onclick="editarLancQuebra('${q.id}')">Editar</button> <button class="btn danger sm" onclick="apagarLancQuebra('${q.id}')">Apagar</button></td></tr>`;
     });
+    if(comLanc.length){
+      hb.innerHTML+=`<tr class="total-row">
+        <td colspan="5" style="text-align:right;font-weight:700">Valor total:</td>
+        <td style="font-weight:700;color:var(--red)">${fmtMoney(totalQ)}</td>
+        <td colspan="4"></td></tr>`;
+    }
   }
 }
 window.toggleDescObs=function(id){
@@ -1697,6 +1728,49 @@ window.editarLancQuebra=function(id){
       const descObs=(descarte==='Avaria'||descarte==='Consertar')?($('#qed_obs').value||'').trim():'';
       q.lanc={numero,valor:valorRaw===''?null:parseFloat(valorRaw),data,descarte,descObs,registradoEm:new Date().toISOString()};
       saveDB();closeModal();toast('Lançamento atualizado.','ok');renderLancQuebras();renderQuebras();
+    });
+  });
+};
+/* edita os DADOS da quebra em si (código, quantidade, fornecedor, etc.) */
+window.editarQuebraReg=function(id){
+  const q=DB.quebras.find(x=>x.id===id);if(!q)return;
+  confirmarSenhaMaster('Editar registro de quebra',()=>{
+    const tsel=v=>q.tipo===v?'selected':'';
+    const fopts=['<option value="">—</option>'].concat((DB.fornecedores||[]).map(f=>`<option value="${esc(f)}" ${q.fornecedor===f?'selected':''}>${esc(f)}</option>`)).join('');
+    openModal(`<h3>Editar quebra — ${txt(q.codigo)}</h3>
+      <div class="field"><label>Código do produto</label><input id="qr_cod" type="text" value="${esc(q.codigo||'')}"></div>
+      <div class="field"><label>Quantidade</label><input id="qr_qtd" type="number" min="1" value="${q.qtd!=null?q.qtd:''}"></div>
+      <div class="field"><label>Tipo de quebra</label><select id="qr_tipo">
+        <option value="Quebra na loja" ${tsel('Quebra na loja')}>Quebra na loja</option>
+        <option value="Quebra Fornecedor" ${tsel('Quebra Fornecedor')}>Quebra Fornecedor</option>
+      </select></div>
+      <div class="field"><label>Fornecedor</label><select id="qr_forn">${fopts}</select></div>
+      <div class="field"><label>Nota fiscal (NF)</label><input id="qr_nf" type="text" value="${esc(q.nf||'')}"></div>
+      <div class="field"><label>Responsável</label><input id="qr_resp" type="text" value="${esc(q.resp||'')}"></div>
+      <div class="field"><label>Funcionário que quebrou</label><input id="qr_func" type="text" value="${esc(q.func||'')}"></div>
+      <div class="field"><label>Data</label><input id="qr_data" type="date" value="${q.data||''}"></div>
+      <div class="field"><label>Observações</label><textarea id="qr_obs" rows="2">${esc(q.obs||'')}</textarea></div>
+      <div class="row-actions" style="margin-top:8px">
+        <button class="btn" id="qr_ok">Salvar alterações</button>
+        <button class="btn ghost" onclick="closeModal()">Cancelar</button>
+      </div>`);
+    $('#qr_ok').addEventListener('click',()=>{
+      const fornVal=($('#qr_forn').value||'').trim();
+      if(fornVal!=='' && !fornecedorCadastrado(fornVal)){toast('Fornecedor não cadastrado. Cadastre-o na aba Senhas.','err');return;}
+      const qtdRaw=$('#qr_qtd').value;
+      q.codigo=($('#qr_cod').value||'').trim();
+      q.qtd=qtdRaw===''?null:parseInt(qtdRaw);
+      q.tipo=$('#qr_tipo').value;
+      q.fornecedor=fornVal;
+      q.nf=($('#qr_nf').value||'').trim();
+      q.resp=($('#qr_resp').value||'').trim();
+      q.func=($('#qr_func').value||'').trim();
+      q.data=$('#qr_data').value||q.data;
+      q.obs=($('#qr_obs').value||'').trim();
+      q.editadoEm=new Date().toISOString();
+      saveDB();
+      enviarQuebraAgora(q); // sincroniza a edição na nuvem
+      closeModal();toast('Quebra atualizada.','ok');renderLancQuebras();renderQuebras();
     });
   });
 };
@@ -2218,7 +2292,7 @@ if(CLOUD_URL){
 /* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
 window.rodarDiagnostico=function(){
   const locais = (DB.quebras||[]).slice();
-  let relatorio = 'DIAGNÓSTICO v16\n\n';
+  let relatorio = 'DIAGNÓSTICO v19\n\n';
   relatorio += 'Quebras neste aparelho: '+locais.length+'\n';
   setSyncStatus('Testando…','saving');
 
