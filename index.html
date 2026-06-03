@@ -294,6 +294,8 @@ input[type=file]{font-size:13px;color:var(--ink-soft)}
    MODO FILIAL — interface otimizada para CELULAR
    ============================================================ */
 .mode-filial .content{max-width:760px;margin:0 auto;padding:0 4px}
+/* Ajuste Estoque é só para o MASTER — filiais não veem esse tipo de quebra */
+.mode-filial #tipo_ajuste{display:none}
 /* navegação: cards grandes empilhados, fáceis de tocar */
 .mode-filial .opt-grid{grid-template-columns:1fr 1fr;gap:11px}
 .mode-filial .opt-card{padding:14px 12px;border-radius:15px;min-width:0;overflow:hidden}
@@ -1140,7 +1142,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v19';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v21';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -1476,6 +1478,8 @@ function renderV3(){
 
 /* ===================== VIEW 4: LANÇAMENTO (MASTER) ===================== */
 let l_filtro={filial:'',de:null,ate:null};
+let pagHistT=1, pagHistQ=1; // página atual dos históricos (10 por página)
+const PG_HIST=10;
 function fillLFilial(){
   const sel=$('#l_filial');if(!sel)return;const atual=sel.value;
   sel.innerHTML='<option value="">Todas as filiais</option>';
@@ -1520,11 +1524,11 @@ $('#lq_aplicar').addEventListener('click',()=>{
   lq.nf=$('#lq_nf').value.trim().toLowerCase();
   lq.forn=$('#lq_forn').value.trim().toLowerCase();
   lq.de=$('#lq_de').value||null;lq.ate=$('#lq_ate').value||null;
-  renderLancQuebras();
+  pagHistQ=1; renderLancQuebras();
 });
 $('#lq_limpar').addEventListener('click',()=>{
   ['lq_tipo','lq_filial','lq_codigo','lq_func','lq_nf','lq_forn','lq_de','lq_ate'].forEach(id=>$('#'+id).value='');
-  lq={tipo:'',filial:'',codigo:'',func:'',nf:'',forn:'',de:null,ate:null};renderLancQuebras();
+  lq={tipo:'',filial:'',codigo:'',func:'',nf:'',forn:'',de:null,ate:null};pagHistQ=1;renderLancQuebras();
 });
 function renderV4(){
   const isMaster=session.tipo==='master';
@@ -1572,29 +1576,47 @@ function renderV4(){
   if(lht.de||lht.ate)comLancBase=comLancBase.filter(t=>inDateRange(t.lanc.data,lht.de,lht.ate));
   const comLanc=sortByRota(comLancBase,'enviadoEm');
   const hb=$('#tbl4hist tbody');hb.innerHTML='';
-  if(!comLanc.length){hb.innerHTML=`<tr><td colspan="7"><div class="empty-state">Nenhum lançamento para os filtros selecionados.</div></td></tr>`;}
-  let totalT=0;
-  comLanc.forEach(t=>{
-    const l=t.lanc;
-    const ct=custoTotal(t.qtd,l.valor); // qtd × valor unitário
-    if(ct!=null)totalT+=ct;
-    hb.innerHTML+=`<tr>
-      <td><strong>${txt(t.nome)}</strong></td>
-      <td>${esc(t.origem)} <span class="muted">→</span> ${esc(t.destino)}</td>
-      <td>${txt(l.numero)}</td>
-      <td>${ct!=null?fmtMoney(ct):'—'}</td>
-      <td>${l.data?fmtDate(l.data):'—'}</td>
-      <td class="muted">${fmtDateTime(l.registradoEm)}</td>
-      <td style="white-space:nowrap"><button class="btn ghost sm" onclick="editarTransfer('${t.id}')">Editar</button> <button class="btn danger sm" onclick="apagarTransfer('${t.id}')">Apagar</button></td></tr>`;
-  });
-  if(comLanc.length){
+  if(!comLanc.length){
+    hb.innerHTML=`<tr><td colspan="7"><div class="empty-state">Nenhum lançamento para os filtros selecionados.</div></td></tr>`;
+  }else{
+    // total geral (todos os filtrados, não só os da página)
+    let totalT=0;
+    comLanc.forEach(t=>{const ct=custoTotal(t.qtd,t.lanc.valor);if(ct!=null)totalT+=ct;});
+    // paginação: 10 por página
+    const totalPag=Math.max(1,Math.ceil(comLanc.length/PG_HIST));
+    if(pagHistT>totalPag)pagHistT=totalPag;
+    const ini=(pagHistT-1)*PG_HIST;
+    const pagina=comLanc.slice(ini,ini+PG_HIST);
+    pagina.forEach(t=>{
+      const l=t.lanc;
+      const ct=custoTotal(t.qtd,l.valor);
+      hb.innerHTML+=`<tr>
+        <td><strong>${txt(t.nome)}</strong></td>
+        <td>${esc(t.origem)} <span class="muted">→</span> ${esc(t.destino)}</td>
+        <td>${txt(l.numero)}</td>
+        <td>${ct!=null?fmtMoney(ct):'—'}</td>
+        <td>${l.data?fmtDate(l.data):'—'}</td>
+        <td class="muted">${fmtDateTime(l.registradoEm)}</td>
+        <td style="white-space:nowrap"><button class="btn ghost sm" onclick="editarTransfer('${t.id}')">Editar</button> <button class="btn danger sm" onclick="apagarTransfer('${t.id}')">Apagar</button></td></tr>`;
+    });
+    // linha de total (sempre soma TODOS os filtrados)
     hb.innerHTML+=`<tr class="total-row">
-      <td colspan="3" style="text-align:right;font-weight:700">Valor total:</td>
+      <td colspan="3" style="text-align:right;font-weight:700">Valor total (${comLanc.length} ${comLanc.length===1?'lançamento':'lançamentos'}):</td>
       <td style="font-weight:700;color:var(--accent)">${fmtMoney(totalT)}</td>
       <td colspan="3"></td></tr>`;
+    // controles de página
+    if(totalPag>1){
+      hb.innerHTML+=`<tr><td colspan="7" style="padding:10px;background:var(--panel)">
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap">
+          <button class="btn ghost sm" onclick="mudarPagHistT(-1)" ${pagHistT===1?'disabled':''}>← Anterior</button>
+          <span class="muted">Página <strong>${pagHistT}</strong> de ${totalPag} — exibindo ${pagina.length} de ${comLanc.length}</span>
+          <button class="btn ghost sm" onclick="mudarPagHistT(1)" ${pagHistT===totalPag?'disabled':''}>Próxima →</button>
+        </div></td></tr>`;
+    }
   }
   renderLancQuebras();
 }
+window.mudarPagHistT=function(d){pagHistT=Math.max(1,pagHistT+d);renderV4();};
 
 /* === Lançamento de quebras (na aba Lançamento) === */
 function renderLancQuebras(){
@@ -1655,33 +1677,49 @@ function renderLancQuebras(){
   if(lq.de||lq.ate)comLancBase=comLancBase.filter(q=>inDateRange(q.data,lq.de,lq.ate));
   const comLanc=sortByFilialData(comLancBase,'data');
   const hb=$('#tbl4qhist tbody');if(hb){hb.innerHTML='';
-    if(!comLanc.length){hb.innerHTML=`<tr><td colspan="10"><div class="empty-state">Nenhum lançamento de quebra para os filtros selecionados.</div></td></tr>`;}
-    let totalQ=0;
-    comLanc.forEach(q=>{
-      const l=q.lanc;
-      const ct=custoTotal(q.qtd,l.valor); // qtd × valor unitário
-      if(ct!=null)totalQ+=ct;
-      const descCell = l.descarte ? (esc(l.descarte) + (l.descObs?`<div class="muted" style="font-size:11px">${esc(l.descObs)}</div>`:'')) : '—';
-      hb.innerHTML+=`<tr>
-        <td><strong>${txt(q.codigo)}</strong></td>
-        <td>${tipoBadge(q.tipo)}</td>
-        <td>${esc(q.filial)}</td>
-        <td>${q.qtd!=null?q.qtd:'—'}</td>
-        <td>${txt(l.numero)}</td>
-        <td>${ct!=null?fmtMoney(ct):'—'}</td>
-        <td>${l.data?fmtDate(l.data):'—'}</td>
-        <td>${descCell}</td>
-        <td class="muted">${fmtDateTime(l.registradoEm)}</td>
-        <td style="white-space:nowrap"><button class="btn ghost sm" onclick="editarLancQuebra('${q.id}')">Editar</button> <button class="btn danger sm" onclick="apagarLancQuebra('${q.id}')">Apagar</button></td></tr>`;
-    });
-    if(comLanc.length){
+    if(!comLanc.length){
+      hb.innerHTML=`<tr><td colspan="10"><div class="empty-state">Nenhum lançamento de quebra para os filtros selecionados.</div></td></tr>`;
+    }else{
+      // total geral (todos os filtrados)
+      let totalQ=0;
+      comLanc.forEach(q=>{const ct=custoTotal(q.qtd,q.lanc.valor);if(ct!=null)totalQ+=ct;});
+      // paginação
+      const totalPag=Math.max(1,Math.ceil(comLanc.length/PG_HIST));
+      if(pagHistQ>totalPag)pagHistQ=totalPag;
+      const ini=(pagHistQ-1)*PG_HIST;
+      const pagina=comLanc.slice(ini,ini+PG_HIST);
+      pagina.forEach(q=>{
+        const l=q.lanc;
+        const ct=custoTotal(q.qtd,l.valor);
+        const descCell = l.descarte ? (esc(l.descarte) + (l.descObs?`<div class="muted" style="font-size:11px">${esc(l.descObs)}</div>`:'')) : '—';
+        hb.innerHTML+=`<tr>
+          <td><strong>${txt(q.codigo)}</strong></td>
+          <td>${tipoBadge(q.tipo)}</td>
+          <td>${esc(q.filial)}</td>
+          <td>${q.qtd!=null?q.qtd:'—'}</td>
+          <td>${txt(l.numero)}</td>
+          <td>${ct!=null?fmtMoney(ct):'—'}</td>
+          <td>${l.data?fmtDate(l.data):'—'}</td>
+          <td>${descCell}</td>
+          <td class="muted">${fmtDateTime(l.registradoEm)}</td>
+          <td style="white-space:nowrap"><button class="btn ghost sm" onclick="editarLancQuebra('${q.id}')">Editar</button> <button class="btn danger sm" onclick="apagarLancQuebra('${q.id}')">Apagar</button></td></tr>`;
+      });
       hb.innerHTML+=`<tr class="total-row">
-        <td colspan="5" style="text-align:right;font-weight:700">Valor total:</td>
+        <td colspan="5" style="text-align:right;font-weight:700">Valor total (${comLanc.length} ${comLanc.length===1?'lançamento':'lançamentos'}):</td>
         <td style="font-weight:700;color:var(--red)">${fmtMoney(totalQ)}</td>
         <td colspan="4"></td></tr>`;
+      if(totalPag>1){
+        hb.innerHTML+=`<tr><td colspan="10" style="padding:10px;background:var(--panel)">
+          <div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap">
+            <button class="btn ghost sm" onclick="mudarPagHistQ(-1)" ${pagHistQ===1?'disabled':''}>← Anterior</button>
+            <span class="muted">Página <strong>${pagHistQ}</strong> de ${totalPag} — exibindo ${pagina.length} de ${comLanc.length}</span>
+            <button class="btn ghost sm" onclick="mudarPagHistQ(1)" ${pagHistQ===totalPag?'disabled':''}>Próxima →</button>
+          </div></td></tr>`;
+      }
     }
   }
 }
+window.mudarPagHistQ=function(d){pagHistQ=Math.max(1,pagHistQ+d);renderLancQuebras();};
 window.toggleDescObs=function(id){
   const v=$('#qln_desc_'+id).value;
   const wrap=$('#qln_obsWrap_'+id);
@@ -1874,6 +1912,8 @@ window.editarTransfer=function(id){
   const t=DB.transfers.find(x=>x.id===id);if(!t)return;
   confirmarSenhaMaster('Editar transferência',()=>{
     const isCD=t.origem===CD_NOME;
+    const temLanc=!!t.lanc;
+    const l=t.lanc||{};
     openModal(`<h3>Editar transferência${t.nome?' — '+esc(t.nome):''}</h3>
       <div class="grid c2">
         <div class="field"><label>Filial de origem</label><select id="et_origem">${opcoesFiliais(t.origem)}</select></div>
@@ -1889,14 +1929,22 @@ window.editarTransfer=function(id){
           <div class="field"><label>NF</label><input id="et_nf" type="text" value="${esc(t.nf||'')}"></div>
           <div class="field"><label>Fornecedor</label><input id="et_forn" type="text" value="${esc(t.fornecedor||'')}"></div>
         </div>
-        <div class="field"><label>Valor de custo (R$)</label><input id="et_custo" type="number" step="0.01" min="0" value="${t.custo!=null?t.custo:''}"></div>
+        <div class="field"><label>Valor de custo no envio (R$)</label><input id="et_custo" type="number" step="0.01" min="0" value="${t.custo!=null?t.custo:''}"></div>
       </div>
+      ${temLanc?`
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
+        <div style="font-weight:700;margin-bottom:8px;color:var(--accent)">Dados do lançamento</div>
+        <div class="grid c2">
+          <div class="field"><label>Nº da transferência</label><input id="et_lnum" type="text" value="${esc(l.numero||'')}"></div>
+          <div class="field"><label>Valor de custo unitário (R$)</label><input id="et_lval" type="number" step="0.01" value="${l.valor!=null?l.valor:''}"></div>
+        </div>
+        <div class="field"><label>Data do lançamento</label><input id="et_ldat" type="date" value="${l.data||''}"></div>
+      </div>`:''}
       <div class="login-err" id="et_err" style="margin-bottom:6px"></div>
       <div class="row-actions" style="margin-top:8px">
         <button class="btn" id="et_ok">Salvar alterações</button>
         <button class="btn ghost" onclick="closeModal()">Cancelar</button>
       </div>`);
-    // mostra campos do CD conforme a origem escolhida
     const syncCD=()=>{$('#et_cd').classList.toggle('hidden',$('#et_origem').value!==CD_NOME);};
     $('#et_origem').addEventListener('change',syncCD);
     $('#et_ok').addEventListener('click',()=>{
@@ -1911,14 +1959,26 @@ window.editarTransfer=function(id){
         t.nf=($('#et_nf').value||'').trim();
         t.fornecedor=($('#et_forn').value||'').trim();
         const c=$('#et_custo').value;t.custo=c===''?null:parseFloat(c);
-        // reavalia regra de "só NF": NF preenchida e sem nome
         if(t.status!=='recebida') t.status = (t.nf!=='' && nome==='') ? 'nf' : 'aguardando';
         t.somenteNF = (t.nf!=='' && nome==='');
       }else{
         t.nf='';t.fornecedor='';t.custo=null;t.somenteNF=false;
         if(t.status==='nf')t.status='aguardando';
       }
-      saveDB();closeModal();toast('Transferência atualizada em todas as abas.','ok');
+      // edita os dados do lançamento, se houver
+      if(temLanc){
+        const lvRaw=$('#et_lval').value;
+        t.lanc=Object.assign({},t.lanc,{
+          numero:($('#et_lnum').value||'').trim(),
+          valor: lvRaw===''?null:parseFloat(lvRaw),
+          data: $('#et_ldat').value||t.lanc.data||null,
+          registradoEm: new Date().toISOString() // marca a edição como ação mais nova
+        });
+      }
+      t.editadoEm=new Date().toISOString();
+      saveDB();
+      enviarTransferenciaAgora(t); // sincroniza imediatamente (não fica preso no debounce)
+      closeModal();toast('Transferência atualizada em todas as abas.','ok');
       refreshAll();
     });
   });
@@ -1943,11 +2003,11 @@ window.apagarTransfer=function(id){
 $('#l_filtrar').addEventListener('click',()=>{
   l_filtro.filial=$('#l_filial').value;
   l_filtro.de=$('#l_de').value||null;l_filtro.ate=$('#l_ate').value||null;
-  renderV4();
+  pagHistT=1; renderV4();
 });
 $('#l_limpar').addEventListener('click',()=>{
   $('#l_filial').value='';$('#l_de').value='';$('#l_ate').value='';
-  l_filtro={filial:'',de:null,ate:null};renderV4();
+  l_filtro={filial:'',de:null,ate:null};pagHistT=1;renderV4();
 });
 
 /* ===================== VIEW 6: SENHAS (MASTER) ===================== */
@@ -2292,7 +2352,7 @@ if(CLOUD_URL){
 /* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
 window.rodarDiagnostico=function(){
   const locais = (DB.quebras||[]).slice();
-  let relatorio = 'DIAGNÓSTICO v19\n\n';
+  let relatorio = 'DIAGNÓSTICO v21\n\n';
   relatorio += 'Quebras neste aparelho: '+locais.length+'\n';
   setSyncStatus('Testando…','saving');
 
