@@ -1142,7 +1142,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v21';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v23';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -1306,11 +1306,11 @@ $('#fh_aplicar').addEventListener('click',()=>{
   fh.filial=$('#fh_filial').value;
   fh.codigo=$('#fh_codigo').value.trim().toLowerCase();
   fh.de=$('#fh_de').value||null;fh.ate=$('#fh_ate').value||null;
-  renderV2();
+  pagTHist=1; renderV2();
 });
 $('#fh_limpar').addEventListener('click',()=>{
   $('#fh_filial').value='';$('#fh_codigo').value='';$('#fh_de').value='';$('#fh_ate').value='';
-  fh={filial:'',codigo:'',de:null,ate:null};renderV2();
+  fh={filial:'',codigo:'',de:null,ate:null};pagTHist=1;renderV2();
 });
 
 function inDateRange(iso,de,ate){
@@ -1371,27 +1371,44 @@ function renderV2(){
   filt=filt.slice().sort((a,b)=>new Date(a.enviadoEm)-new Date(b.enviadoEm));
 
   const tb=$('#tbl2 tbody');tb.innerHTML='';
-  if(!filt.length){tb.innerHTML=`<tr><td colspan="9"><div class="empty-state">Nenhum registro para esta seleção.</div></td></tr>`;}
-  filt.forEach(t=>{
-    const atras=daysSince(t.enviadoEm)>7 && t.status==='aguardando';
-    const recebida=t.status==='recebida';
-    const podeReceber = !recebida && (session.tipo==='master' || session.filial===t.destino);
-    const tr=document.createElement('tr');
-    if(atras)tr.style.background='rgba(220,38,38,.05)';
-    let stCell = recebida ? '<span class="badge green">recebida</span>'
-      : (atras ? '<span class="badge red">+7 dias</span>' : '<span class="badge amber">aguardando</span>');
-    tr.innerHTML=`
-      <td>${thumbCell(t.foto,t.id)}</td>
-      <td><strong>${txt(t.nome)}</strong></td>
-      <td>${txt(t.codigo)}</td>
-      <td>${qty(t.qtd)}</td>
-      <td>${esc(t.origem)}</td>
-      <td>${esc(t.destino)}</td>
-      <td>${fmtDate(t.enviadoEm)}${t.status==='aguardando'?`<div class="muted" style="font-size:11px">há ${daysSince(t.enviadoEm)} dia(s)</div>`:''}</td>
-      <td>${stCell}</td>
-      <td>${podeReceber?`<button class="btn green sm" onclick="receber('${t.id}')">Receber</button>`:'<span class="muted">—</span>'}</td>`;
-    tb.appendChild(tr);
-  });
+  if(!filt.length){
+    tb.innerHTML=`<tr><td colspan="9"><div class="empty-state">Nenhum registro para esta seleção.</div></td></tr>`;
+  }else{
+    const totalPag=Math.max(1,Math.ceil(filt.length/PG_HIST));
+    if(pagAguard>totalPag)pagAguard=totalPag;
+    const ini=(pagAguard-1)*PG_HIST;
+    const pagina=filt.slice(ini,ini+PG_HIST);
+    pagina.forEach(t=>{
+      const atras=daysSince(t.enviadoEm)>7 && t.status==='aguardando';
+      const recebida=t.status==='recebida';
+      const podeReceber = !recebida && (session.tipo==='master' || session.filial===t.destino);
+      const tr=document.createElement('tr');
+      if(atras)tr.style.background='rgba(220,38,38,.05)';
+      let stCell = recebida ? '<span class="badge green">recebida</span>'
+        : (atras ? '<span class="badge red">+7 dias</span>' : '<span class="badge amber">aguardando</span>');
+      tr.innerHTML=`
+        <td>${thumbCell(t.foto,t.id)}</td>
+        <td><strong>${txt(t.nome)}</strong></td>
+        <td>${txt(t.codigo)}</td>
+        <td>${qty(t.qtd)}</td>
+        <td>${esc(t.origem)}</td>
+        <td>${esc(t.destino)}</td>
+        <td>${fmtDate(t.enviadoEm)}${t.status==='aguardando'?`<div class="muted" style="font-size:11px">há ${daysSince(t.enviadoEm)} dia(s)</div>`:''}</td>
+        <td>${stCell}</td>
+        <td>${podeReceber?`<button class="btn green sm" onclick="receber('${t.id}')">Receber</button>`:'<span class="muted">—</span>'}</td>`;
+      tb.appendChild(tr);
+    });
+    if(totalPag>1){
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td colspan="9" style="padding:10px;background:var(--panel)">
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap">
+          <button class="btn ghost sm" onclick="mudarPagAguard(-1)" ${pagAguard===1?'disabled':''}>← Anterior</button>
+          <span class="muted">Página <strong>${pagAguard}</strong> de ${totalPag} — exibindo ${pagina.length} de ${filt.length}</span>
+          <button class="btn ghost sm" onclick="mudarPagAguard(1)" ${pagAguard===totalPag?'disabled':''}>Próxima →</button>
+        </div></td>`;
+      tb.appendChild(tr);
+    }
+  }
 
   // histórico de transferências REALIZADAS (enviadas pela minha filial = sou origem), incluindo NF. Master vê tudo.
   const allCompleto=visibleTransfers();
@@ -1404,18 +1421,35 @@ function renderV2(){
   if(fh.de||fh.ate)enviadas=enviadas.filter(t=>inDateRange(t.enviadoEm,fh.de,fh.ate));
   const hist=enviadas.slice().sort((a,b)=>new Date(b.enviadoEm)-new Date(a.enviadoEm));
   const hb=$('#tbl2hist tbody');hb.innerHTML='';
-  if(!hist.length){hb.innerHTML=`<tr><td colspan="8"><div class="empty-state">Nenhuma transferência para os filtros selecionados.</div></td></tr>`;}
-  hist.forEach(t=>{
-    const st = t.status==='nf' ? '<span class="badge cd">NF</span>'
-      : (t.status==='recebida'?'<span class="badge green">recebida</span>':(daysSince(t.enviadoEm)>7?'<span class="badge red">aguardando +7d</span>':'<span class="badge amber">aguardando</span>'));
-    hb.innerHTML+=`<tr>
-      <td>${thumbCell(t.foto,t.id)}</td>
-      <td><strong>${txt(t.nome)}</strong></td>
-      <td>${txt(t.codigo)}</td><td>${qty(t.qtd)}</td>
-      <td>${esc(t.origem)}</td><td>${esc(t.destino)}</td>
-      <td>${fmtDate(t.enviadoEm)}</td><td>${st}</td></tr>`;
-  });
+  if(!hist.length){
+    hb.innerHTML=`<tr><td colspan="8"><div class="empty-state">Nenhuma transferência para os filtros selecionados.</div></td></tr>`;
+  }else{
+    const totalPag=Math.max(1,Math.ceil(hist.length/PG_HIST));
+    if(pagTHist>totalPag)pagTHist=totalPag;
+    const ini=(pagTHist-1)*PG_HIST;
+    const pagina=hist.slice(ini,ini+PG_HIST);
+    pagina.forEach(t=>{
+      const st = t.status==='nf' ? '<span class="badge cd">NF</span>'
+        : (t.status==='recebida'?'<span class="badge green">recebida</span>':(daysSince(t.enviadoEm)>7?'<span class="badge red">aguardando +7d</span>':'<span class="badge amber">aguardando</span>'));
+      hb.innerHTML+=`<tr>
+        <td>${thumbCell(t.foto,t.id)}</td>
+        <td><strong>${txt(t.nome)}</strong></td>
+        <td>${txt(t.codigo)}</td><td>${qty(t.qtd)}</td>
+        <td>${esc(t.origem)}</td><td>${esc(t.destino)}</td>
+        <td>${fmtDate(t.enviadoEm)}</td><td>${st}</td></tr>`;
+    });
+    if(totalPag>1){
+      hb.innerHTML+=`<tr><td colspan="8" style="padding:10px;background:var(--panel)">
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap">
+          <button class="btn ghost sm" onclick="mudarPagTHist(-1)" ${pagTHist===1?'disabled':''}>← Anterior</button>
+          <span class="muted">Página <strong>${pagTHist}</strong> de ${totalPag} — exibindo ${pagina.length} de ${hist.length}</span>
+          <button class="btn ghost sm" onclick="mudarPagTHist(1)" ${pagTHist===totalPag?'disabled':''}>Próxima →</button>
+        </div></td></tr>`;
+    }
+  }
 }
+window.mudarPagAguard=function(d){pagAguard=Math.max(1,pagAguard+d);renderV2();};
+window.mudarPagTHist=function(d){pagTHist=Math.max(1,pagTHist+d);renderV2();};
 window.receber=function(id){
   const t=DB.transfers.find(x=>x.id===id);if(!t)return;
   if(session.tipo!=='master'&&session.filial!==t.destino){toast('Apenas a filial de destino pode receber.','err');return;}
@@ -1432,7 +1466,9 @@ window.receber=function(id){
 };
 window.confirmReceber=function(id){
   const t=DB.transfers.find(x=>x.id===id);if(!t)return;
-  t.status='recebida';t.recebidoEm=new Date().toISOString();saveDB();
+  t.status='recebida';t.recebidoEm=new Date().toISOString();
+  saveDB();
+  enviarTransferenciaAgora(t); // envia agora, sem esperar o debounce - garante que sobe
   closeModal();toast('Recebimento confirmado.','ok');refreshAll();switchTab('v3');
 };
 
@@ -1479,6 +1515,7 @@ function renderV3(){
 /* ===================== VIEW 4: LANÇAMENTO (MASTER) ===================== */
 let l_filtro={filial:'',de:null,ate:null};
 let pagHistT=1, pagHistQ=1; // página atual dos históricos (10 por página)
+let pagAguard=1, pagTHist=1, pagQHist=1; // página de Aguardando, Hist.Transf., Hist.Quebras
 const PG_HIST=10;
 function fillLFilial(){
   const sel=$('#l_filial');if(!sel)return;const atual=sel.value;
@@ -2259,11 +2296,11 @@ $('#qf_aplicar').addEventListener('click',()=>{
   qf.filial=$('#qf_filial').value;qf.tipo=$('#qf_tipo').value;
   qf.codigo=$('#qf_codigo').value.trim().toLowerCase();
   qf.de=$('#qf_de').value||null;qf.ate=$('#qf_ate').value||null;
-  renderQuebras();
+  pagQHist=1; renderQuebras();
 });
 $('#qf_limpar').addEventListener('click',()=>{
   $('#qf_filial').value='';$('#qf_tipo').value='';$('#qf_codigo').value='';$('#qf_de').value='';$('#qf_ate').value='';
-  qf={filial:'',tipo:'',codigo:'',de:null,ate:null};renderQuebras();
+  qf={filial:'',tipo:'',codigo:'',de:null,ate:null};pagQHist=1;renderQuebras();
 });
 function tipoBadge(t){
   if(t==='Quebra na loja')return '<span class="badge amber">Quebra na loja</span>';
@@ -2289,7 +2326,11 @@ function renderQuebras(){
   list.sort((a,b)=>new Date(b.registradoEm)-new Date(a.registradoEm));
   const tb=$('#tblQuebras tbody');tb.innerHTML='';
   if(!list.length){tb.innerHTML=`<tr><td colspan="12"><div class="empty-state">Nenhuma quebra registrada.</div></td></tr>`;return;}
-  list.forEach(q=>{
+  const totalPag=Math.max(1,Math.ceil(list.length/PG_HIST));
+  if(pagQHist>totalPag)pagQHist=totalPag;
+  const ini=(pagQHist-1)*PG_HIST;
+  const pagina=list.slice(ini,ini+PG_HIST);
+  pagina.forEach(q=>{
     const fotoCell = q.foto ? `<img class="thumb" src="${fotoSrc(q.foto)}" onclick="qViewPhoto('${q.id}')">` : `<span class="thumb empty">s/foto</span>`;
     const l=q.lanc||{};
     const descCell = l.descarte ? (`<strong>${esc(l.descarte)}</strong>` + (l.descObs?`<div class="muted" style="font-size:11px">${esc(l.descObs)}</div>`:'')) : '—';
@@ -2307,7 +2348,16 @@ function renderQuebras(){
       <td>${descCell}</td>
       <td>${txt(q.obs)}</td></tr>`;
   });
+  if(totalPag>1){
+    tb.innerHTML+=`<tr><td colspan="12" style="padding:10px;background:var(--panel)">
+      <div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap">
+        <button class="btn ghost sm" onclick="mudarPagQHist(-1)" ${pagQHist===1?'disabled':''}>← Anterior</button>
+        <span class="muted">Página <strong>${pagQHist}</strong> de ${totalPag} — exibindo ${pagina.length} de ${list.length}</span>
+        <button class="btn ghost sm" onclick="mudarPagQHist(1)" ${pagQHist===totalPag?'disabled':''}>Próxima →</button>
+      </div></td></tr>`;
+  }
 }
+window.mudarPagQHist=function(d){pagQHist=Math.max(1,pagQHist+d);renderQuebras();};
 
 /* ===================== REFRESH GERAL ===================== */
 function updateNavCounts(){
@@ -2352,7 +2402,7 @@ if(CLOUD_URL){
 /* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
 window.rodarDiagnostico=function(){
   const locais = (DB.quebras||[]).slice();
-  let relatorio = 'DIAGNÓSTICO v21\n\n';
+  let relatorio = 'DIAGNÓSTICO v23\n\n';
   relatorio += 'Quebras neste aparelho: '+locais.length+'\n';
   setSyncStatus('Testando…','saving');
 
