@@ -1142,7 +1142,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v23';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v24';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -1516,6 +1516,7 @@ function renderV3(){
 let l_filtro={filial:'',de:null,ate:null};
 let pagHistT=1, pagHistQ=1; // página atual dos históricos (10 por página)
 let pagAguard=1, pagTHist=1, pagQHist=1; // página de Aguardando, Hist.Transf., Hist.Quebras
+let pagLancT=1, pagLancQ=1; // página de Lançamento de transferências e Lançamento de quebras (pendentes)
 const PG_HIST=10;
 function fillLFilial(){
   const sel=$('#l_filial');if(!sel)return;const atual=sel.value;
@@ -1581,27 +1582,42 @@ function renderV4(){
   list=sortByRota(list,'enviadoEm');
 
   const tb=$('#tbl4 tbody');tb.innerHTML='';
-  if(!list.length){tb.innerHTML=`<tr><td colspan="9"><div class="empty-state">Nenhuma transferência pendente de lançamento.</div></td></tr>`;}
-  list.forEach(t=>{
-    const l=t.lanc||{};
-    const inS='padding:6px 8px;background:#fff;border:1px solid var(--line);color:var(--ink);border-radius:7px;width:100%;min-width:90px';
-    tb.innerHTML+=`<tr>
-      <td><strong>${txt(t.nome)}</strong><div class="muted" style="font-size:11px">${fmtDate(t.enviadoEm)}</div></td>
-      <td>${esc(t.origem)} <span class="muted">→</span> ${esc(t.destino)}</td>
-      <td>${txt(t.codigo)}</td>
-      <td>${txt(t.fornecedor)}</td>
-      <td>${qty(t.qtd)}</td>
-      <td><input id="ln_num_${t.id}" type="text" placeholder="Nº" value="${esc(l.numero||'')}" style="${inS}"></td>
-      <td><input id="ln_val_${t.id}" type="number" step="0.01" min="0" placeholder="0,00" value="${l.valor!=null?l.valor:''}" style="${inS}"></td>
-      <td><input id="ln_dat_${t.id}" type="date" value="${l.data||''}" style="${inS}"></td>
-      <td><div style="display:flex;flex-direction:column;gap:6px;min-width:96px">
-        <button class="btn sm" onclick="salvarLanc('${t.id}')">Salvar</button>
-        <div style="display:flex;gap:6px">
-          <button class="btn ghost sm" style="flex:1" onclick="editarTransfer('${t.id}')">Editar</button>
-          <button class="btn danger sm" style="flex:1" onclick="apagarTransfer('${t.id}')">Apagar</button>
-        </div>
-      </div></td></tr>`;
-  });
+  if(!list.length){
+    tb.innerHTML=`<tr><td colspan="9"><div class="empty-state">Nenhuma transferência pendente de lançamento.</div></td></tr>`;
+  }else{
+    const totalPag=Math.max(1,Math.ceil(list.length/PG_HIST));
+    if(pagLancT>totalPag)pagLancT=totalPag;
+    const ini=(pagLancT-1)*PG_HIST;
+    const pagina=list.slice(ini,ini+PG_HIST);
+    pagina.forEach(t=>{
+      const l=t.lanc||{};
+      const inS='padding:6px 8px;background:#fff;border:1px solid var(--line);color:var(--ink);border-radius:7px;width:100%;min-width:90px';
+      tb.innerHTML+=`<tr>
+        <td><strong>${txt(t.nome)}</strong><div class="muted" style="font-size:11px">${fmtDate(t.enviadoEm)}</div></td>
+        <td>${esc(t.origem)} <span class="muted">→</span> ${esc(t.destino)}</td>
+        <td>${txt(t.codigo)}</td>
+        <td>${txt(t.fornecedor)}</td>
+        <td>${qty(t.qtd)}</td>
+        <td><input id="ln_num_${t.id}" type="text" placeholder="Nº" value="${esc(l.numero||'')}" style="${inS}"></td>
+        <td><input id="ln_val_${t.id}" type="number" step="0.01" min="0" placeholder="0,00" value="${l.valor!=null?l.valor:''}" style="${inS}"></td>
+        <td><input id="ln_dat_${t.id}" type="date" value="${l.data||''}" style="${inS}"></td>
+        <td><div style="display:flex;flex-direction:column;gap:6px;min-width:96px">
+          <button class="btn sm" onclick="salvarLanc('${t.id}')">Salvar</button>
+          <div style="display:flex;gap:6px">
+            <button class="btn ghost sm" style="flex:1" onclick="editarTransfer('${t.id}')">Editar</button>
+            <button class="btn danger sm" style="flex:1" onclick="apagarTransfer('${t.id}')">Apagar</button>
+          </div>
+        </div></td></tr>`;
+    });
+    if(totalPag>1){
+      tb.innerHTML+=`<tr><td colspan="9" style="padding:10px;background:var(--panel)">
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap">
+          <button class="btn ghost sm" onclick="mudarPagLancT(-1)" ${pagLancT===1?'disabled':''}>← Anterior</button>
+          <span class="muted">Página <strong>${pagLancT}</strong> de ${totalPag} — exibindo ${pagina.length} de ${list.length}</span>
+          <button class="btn ghost sm" onclick="mudarPagLancT(1)" ${pagLancT===totalPag?'disabled':''}>Próxima →</button>
+        </div></td></tr>`;
+    }
+  }
 
   // histórico de lançamentos (transferências que já têm lançamento)
   fillLhtRota();
@@ -1654,6 +1670,7 @@ function renderV4(){
   renderLancQuebras();
 }
 window.mudarPagHistT=function(d){pagHistT=Math.max(1,pagHistT+d);renderV4();};
+window.mudarPagLancT=function(d){pagLancT=Math.max(1,pagLancT+d);renderV4();};
 
 /* === Lançamento de quebras (na aba Lançamento) === */
 function renderLancQuebras(){
@@ -1663,45 +1680,60 @@ function renderLancQuebras(){
   let semLanc=DB.quebras.filter(q=>!q.lanc);
   semLanc=sortByFilialData(semLanc,'data');
   const tb=$('#tbl4q tbody');if(tb){tb.innerHTML='';
-    if(!semLanc.length){tb.innerHTML=`<tr><td colspan="16"><div class="empty-state">Nenhuma quebra pendente de lançamento.</div></td></tr>`;}
-    semLanc.forEach(q=>{
-      const l=q.lanc||{};
-      const desc=l.descarte||'';
-      const obsHidden=(desc==='Avaria'||desc==='Consertar')?'':'hidden';
-      const fotoCell = q.foto ? `<img class="thumb" src="${fotoSrc(q.foto)}" onclick="qViewPhoto('${q.id}')">` : `<span class="thumb empty">s/foto</span>`;
-      tb.innerHTML+=`<tr>
-        <td>${fotoCell}</td>
-        <td><strong>${txt(q.codigo)}</strong></td>
-        <td>${q.qtd!=null?q.qtd:'—'}</td>
-        <td>${tipoBadge(q.tipo)}</td>
-        <td>${esc(q.filial)}</td>
-        <td>${txt(q.fornecedor)}</td>
-        <td>${txt(q.nf)}</td>
-        <td>${txt(q.resp)}</td>
-        <td>${txt(q.func)}</td>
-        <td>${fmtDate(q.data)}</td>
-        <td>${txt(q.obs)}</td>
-        <td><input id="qln_num_${q.id}" type="text" placeholder="Nº" value="${esc(l.numero||'')}" style="${inS}"></td>
-        <td><input id="qln_val_${q.id}" type="number" step="0.01" placeholder="0,00" value="${l.valor!=null?l.valor:''}" style="${inS}"></td>
-        <td><input id="qln_dat_${q.id}" type="date" value="${l.data||''}" style="${inS}"></td>
-        <td>
-          <select id="qln_desc_${q.id}" style="${inS}" onchange="toggleDescObs('${q.id}')">
-            <option value="">—</option>
-            <option value="Jogar fora" ${desc==='Jogar fora'?'selected':''}>Jogar fora</option>
-            <option value="Enviar CD" ${desc==='Enviar CD'?'selected':''}>Enviar CD</option>
-            <option value="Avaria" ${desc==='Avaria'?'selected':''}>Avaria</option>
-            <option value="Consertar" ${desc==='Consertar'?'selected':''}>Consertar</option>
-          </select>
-          <div id="qln_obsWrap_${q.id}" class="${obsHidden}" style="margin-top:6px">
-            <textarea id="qln_obs_${q.id}" rows="2" placeholder="Observações" style="${inS};min-width:140px">${esc(l.descObs||'')}</textarea>
-          </div>
-        </td>
-        <td style="white-space:nowrap">
-          <button class="btn sm" onclick="salvarLancQuebra('${q.id}')">Salvar</button>
-          <button class="btn ghost sm" onclick="editarQuebraReg('${q.id}')">Editar</button>
-          <button class="btn danger sm" onclick="apagarLancQuebra('${q.id}')">Apagar</button>
-        </td></tr>`;
-    });
+    if(!semLanc.length){
+      tb.innerHTML=`<tr><td colspan="16"><div class="empty-state">Nenhuma quebra pendente de lançamento.</div></td></tr>`;
+    }else{
+      const totalPag=Math.max(1,Math.ceil(semLanc.length/PG_HIST));
+      if(pagLancQ>totalPag)pagLancQ=totalPag;
+      const ini=(pagLancQ-1)*PG_HIST;
+      const pagina=semLanc.slice(ini,ini+PG_HIST);
+      pagina.forEach(q=>{
+        const l=q.lanc||{};
+        const desc=l.descarte||'';
+        const obsHidden=(desc==='Avaria'||desc==='Consertar')?'':'hidden';
+        const fotoCell = q.foto ? `<img class="thumb" src="${fotoSrc(q.foto)}" onclick="qViewPhoto('${q.id}')">` : `<span class="thumb empty">s/foto</span>`;
+        tb.innerHTML+=`<tr>
+          <td>${fotoCell}</td>
+          <td><strong>${txt(q.codigo)}</strong></td>
+          <td>${q.qtd!=null?q.qtd:'—'}</td>
+          <td>${tipoBadge(q.tipo)}</td>
+          <td>${esc(q.filial)}</td>
+          <td>${txt(q.fornecedor)}</td>
+          <td>${txt(q.nf)}</td>
+          <td>${txt(q.resp)}</td>
+          <td>${txt(q.func)}</td>
+          <td>${fmtDate(q.data)}</td>
+          <td>${txt(q.obs)}</td>
+          <td><input id="qln_num_${q.id}" type="text" placeholder="Nº" value="${esc(l.numero||'')}" style="${inS}"></td>
+          <td><input id="qln_val_${q.id}" type="number" step="0.01" placeholder="0,00" value="${l.valor!=null?l.valor:''}" style="${inS}"></td>
+          <td><input id="qln_dat_${q.id}" type="date" value="${l.data||''}" style="${inS}"></td>
+          <td>
+            <select id="qln_desc_${q.id}" style="${inS}" onchange="toggleDescObs('${q.id}')">
+              <option value="">—</option>
+              <option value="Jogar fora" ${desc==='Jogar fora'?'selected':''}>Jogar fora</option>
+              <option value="Enviar CD" ${desc==='Enviar CD'?'selected':''}>Enviar CD</option>
+              <option value="Avaria" ${desc==='Avaria'?'selected':''}>Avaria</option>
+              <option value="Consertar" ${desc==='Consertar'?'selected':''}>Consertar</option>
+            </select>
+            <div id="qln_obsWrap_${q.id}" class="${obsHidden}" style="margin-top:6px">
+              <textarea id="qln_obs_${q.id}" rows="2" placeholder="Observações" style="${inS};min-width:140px">${esc(l.descObs||'')}</textarea>
+            </div>
+          </td>
+          <td style="white-space:nowrap">
+            <button class="btn sm" onclick="salvarLancQuebra('${q.id}')">Salvar</button>
+            <button class="btn ghost sm" onclick="editarQuebraReg('${q.id}')">Editar</button>
+            <button class="btn danger sm" onclick="apagarLancQuebra('${q.id}')">Apagar</button>
+          </td></tr>`;
+      });
+      if(totalPag>1){
+        tb.innerHTML+=`<tr><td colspan="16" style="padding:10px;background:var(--panel)">
+          <div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap">
+            <button class="btn ghost sm" onclick="mudarPagLancQ(-1)" ${pagLancQ===1?'disabled':''}>← Anterior</button>
+            <span class="muted">Página <strong>${pagLancQ}</strong> de ${totalPag} — exibindo ${pagina.length} de ${semLanc.length}</span>
+            <button class="btn ghost sm" onclick="mudarPagLancQ(1)" ${pagLancQ===totalPag?'disabled':''}>Próxima →</button>
+          </div></td></tr>`;
+      }
+    }
   }
   // histórico: quebras COM lançamento (com filtros)
   let comLancBase=DB.quebras.filter(q=>q.lanc);
@@ -1757,6 +1789,7 @@ function renderLancQuebras(){
   }
 }
 window.mudarPagHistQ=function(d){pagHistQ=Math.max(1,pagHistQ+d);renderLancQuebras();};
+window.mudarPagLancQ=function(d){pagLancQ=Math.max(1,pagLancQ+d);renderLancQuebras();};
 window.toggleDescObs=function(id){
   const v=$('#qln_desc_'+id).value;
   const wrap=$('#qln_obsWrap_'+id);
@@ -2040,11 +2073,11 @@ window.apagarTransfer=function(id){
 $('#l_filtrar').addEventListener('click',()=>{
   l_filtro.filial=$('#l_filial').value;
   l_filtro.de=$('#l_de').value||null;l_filtro.ate=$('#l_ate').value||null;
-  pagHistT=1; renderV4();
+  pagLancT=1; pagHistT=1; renderV4();
 });
 $('#l_limpar').addEventListener('click',()=>{
   $('#l_filial').value='';$('#l_de').value='';$('#l_ate').value='';
-  l_filtro={filial:'',de:null,ate:null};pagHistT=1;renderV4();
+  l_filtro={filial:'',de:null,ate:null};pagLancT=1;pagHistT=1;renderV4();
 });
 
 /* ===================== VIEW 6: SENHAS (MASTER) ===================== */
@@ -2402,7 +2435,7 @@ if(CLOUD_URL){
 /* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
 window.rodarDiagnostico=function(){
   const locais = (DB.quebras||[]).slice();
-  let relatorio = 'DIAGNÓSTICO v23\n\n';
+  let relatorio = 'DIAGNÓSTICO v24\n\n';
   relatorio += 'Quebras neste aparelho: '+locais.length+'\n';
   setSyncStatus('Testando…','saving');
 
