@@ -1110,6 +1110,7 @@ $('#loginPass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 function doLogin(){
   const who=$('#loginFilial').value;const pass=$('#loginPass').value.trim();const err=$('#loginErr');err.textContent='';
   if(pass==='diag'){ $('#loginPass').value=''; rodarDiagnostico(); return; }
+  if(pass==='subir'){ $('#loginPass').value=''; subirLancamentosPresos(); return; }
   if(who==='__master__'){
     if(pass===String(DB.master).trim()){session={tipo:'master',filial:null};enterApp();}
     else err.textContent='Senha master incorreta.';
@@ -1142,7 +1143,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v24';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v25';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -1805,7 +1806,9 @@ window.salvarLancQuebra=function(id){
   const descObs=(descarte==='Avaria'||descarte==='Consertar') ? ($('#qln_obs_'+id).value||'').trim() : '';
   if(!numero && valorRaw==='' && !data && !descarte){toast('Preencha ao menos um campo.','err');return;}
   q.lanc={numero,valor:valorRaw===''?null:parseFloat(valorRaw),data,descarte,descObs,registradoEm:new Date().toISOString()};
-  saveDB();toast('Lançamento de quebra salvo.','ok');renderLancQuebras();renderQuebras();
+  saveDB();
+  enviarQuebraAgora(q); // garante envio imediato à nuvem
+  toast('Lançamento de quebra salvo.','ok');renderLancQuebras();renderQuebras();
 };
 window.editarLancQuebra=function(id){
   const q=DB.quebras.find(x=>x.id===id);if(!q||!q.lanc)return;
@@ -1913,6 +1916,7 @@ window.salvarLanc=function(id){
     registradoEm:new Date().toISOString()
   };
   saveDB();
+  enviarTransferenciaAgora(t); // garante envio imediato à nuvem
   toast('Lançamento salvo.','ok');
   renderV4();
 };
@@ -2435,7 +2439,7 @@ if(CLOUD_URL){
 /* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
 window.rodarDiagnostico=function(){
   const locais = (DB.quebras||[]).slice();
-  let relatorio = 'DIAGNÓSTICO v24\n\n';
+  let relatorio = 'DIAGNÓSTICO v25\n\n';
   relatorio += 'Quebras neste aparelho: '+locais.length+'\n';
   setSyncStatus('Testando…','saving');
 
@@ -2475,6 +2479,83 @@ window.rodarDiagnostico=function(){
     .catch(e=>{
       relatorio += '\n✗ ERRO DE CONEXÃO: '+e+'\n\nO aparelho não conseguiu falar com a nuvem.';
       alert(relatorio);
+    });
+};
+
+/* RECUPERAÇÃO: encontra todos os lançamentos que estão LOCAIS mas não na NUVEM,
+   e os envia um a um (com retry simples). Mostra um relatório no fim. */
+window.subirLancamentosPresos=function(){
+  if(!CLOUD_URL){alert('Sem URL da nuvem configurada.');return;}
+  // 1) baixar o que a nuvem tem agora
+  setSyncStatus('Comparando local x nuvem…','saving');
+  fetch(CLOUD_URL+'?action=load&t='+Date.now())
+    .then(r=>r.json())
+    .then(resp=>{
+      const nuvemDB = (resp && resp.data) ? resp.data : {transfers:[],quebras:[]};
+      const nuvemT = {}; (nuvemDB.transfers||[]).forEach(t=>{ nuvemT[t.id]=t; });
+      const nuvemQ = {}; (nuvemDB.quebras||[]).forEach(q=>{ nuvemQ[q.id]=q; });
+      // identifica lançamentos LOCAIS que faltam na nuvem (ou estão sem lanc na nuvem)
+      const transFaltam = (DB.transfers||[]).filter(t=>{
+        if(!t.lanc) return false;
+        const naNuvem = nuvemT[t.id];
+        return !naNuvem || !naNuvem.lanc; // não existe na nuvem OU existe sem lanc
+      });
+      const quebFaltam = (DB.quebras||[]).filter(q=>{
+        if(!q.lanc) return false;
+        const naNuvem = nuvemQ[q.id];
+        return !naNuvem || !naNuvem.lanc;
+      });
+      const total = transFaltam.length + quebFaltam.length;
+      if(total===0){
+        alert('Nada para subir.\n\nTodos os lançamentos locais já estão na nuvem.\n\nLocal: '+(DB.transfers||[]).filter(t=>t.lanc).length+' lanç. transferência + '+(DB.quebras||[]).filter(q=>q.lanc).length+' lanç. quebra.\nNuvem: '+(nuvemDB.transfers||[]).filter(t=>t.lanc).length+' + '+(nuvemDB.quebras||[]).filter(q=>q.lanc).length+'.');
+        setSyncStatus('Salvo na nuvem ✓','ok');
+        return;
+      }
+      if(!confirm('Encontrei '+total+' lançamento(s) que estão SÓ neste computador:\n  - '+transFaltam.length+' transferência(s)\n  - '+quebFaltam.length+' quebra(s)\n\nSubir todos para a nuvem agora?')){
+        setSyncStatus('Cancelado.','err'); return;
+      }
+      // 2) envia um a um
+      const sucesso=[]; const falha=[];
+      let pendente = transFaltam.length + quebFaltam.length;
+      const acabou=()=>{
+        const msg = 'RECUPERAÇÃO CONCLUÍDA\n\n'
+          + '✓ Enviados com sucesso: '+sucesso.length+'\n'
+          + (falha.length?('✗ Falharam: '+falha.length+'\n'):'')
+          + (falha.length?'\nIDs que falharam: '+falha.slice(0,10).join(', ')+(falha.length>10?'…':''):'');
+        alert(msg);
+        setSyncStatus(falha.length?'Falhas no envio':'Salvo na nuvem ✓', falha.length?'err':'ok');
+      };
+      const enviarT=(t)=>{
+        const tLeve=Object.assign({},t); if(tLeve.foto && String(tLeve.foto).indexOf('data:')===0) tLeve.foto=null;
+        return fetch(CLOUD_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
+          body:JSON.stringify({action:'addTransfer',transfer:tLeve,seq:DB.seq})})
+          .then(r=>r.json().catch(()=>null))
+          .then(()=>sucesso.push(t.id))
+          .catch(()=>falha.push(t.id))
+          .finally(()=>{pendente--; setSyncStatus('Subindo… faltam '+pendente,'saving'); if(pendente===0) acabou();});
+      };
+      const enviarQ=(q)=>{
+        const qLeve=Object.assign({},q); if(qLeve.foto && String(qLeve.foto).indexOf('data:')===0) qLeve.foto=null;
+        return fetch(CLOUD_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
+          body:JSON.stringify({action:'addQuebra',quebra:qLeve,seq:DB.seq})})
+          .then(r=>r.json().catch(()=>null))
+          .then(()=>sucesso.push(q.id))
+          .catch(()=>falha.push(q.id))
+          .finally(()=>{pendente--; setSyncStatus('Subindo… faltam '+pendente,'saving'); if(pendente===0) acabou();});
+      };
+      // dispara em sequência espaçada (250ms entre envios) para não saturar
+      let i=0;
+      const fila=[...transFaltam.map(t=>()=>enviarT(t)), ...quebFaltam.map(q=>()=>enviarQ(q))];
+      const proximo=()=>{
+        if(i>=fila.length) return;
+        fila[i++]();
+        setTimeout(proximo, 250);
+      };
+      proximo();
+    })
+    .catch(e=>{
+      alert('Não consegui ler a nuvem para comparar.\nErro: '+e+'\n\nNenhum dado foi alterado.');
+      setSyncStatus('Sem conexão','err');
     });
 };
 </script>
