@@ -696,7 +696,7 @@ input[type=file]{font-size:13px;color:var(--ink-soft)}
           </div>
           <div class="table-wrap">
             <table id="tbl4qhist"><thead><tr>
-              <th>Código</th><th>Tipo</th><th>Filial</th><th>Qtd</th><th>Nº transferência</th><th>Valor de custo</th><th>Data lançamento</th><th>Descarte</th><th>Registrado em</th><th>Ação</th>
+              <th>Foto</th><th>Código</th><th>Tipo</th><th>Filial</th><th>Qtd</th><th>Nº transferência</th><th>Valor de custo</th><th>Data lançamento</th><th>Descarte</th><th>Registrado em</th><th>Ação</th>
             </tr></thead><tbody></tbody></table>
           </div>
         </div>
@@ -1060,7 +1060,19 @@ function custoTotal(qtd, valorUnit){
   const q = (qtd==null || qtd==='') ? 1 : Number(qtd); // sem quantidade, assume 1
   return Number(valorUnit) * q;
 }
-function fmtDate(iso){if(!iso)return '—';const d=new Date(iso);return d.toLocaleDateString('pt-BR');}
+/* formata data. Se vier só "YYYY-MM-DD" (campo de date input), trata como
+   data local — sem converter pelo fuso horário, que causava aparecer 1 dia
+   a menos no Brasil (UTC-3). Datas completas (ISO com horário) usam Date normal. */
+function fmtDate(iso){
+  if(!iso) return '—';
+  const s = String(iso);
+  // só-data: YYYY-MM-DD (campo de input type="date")
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)){
+    const [y,m,d] = s.split('-');
+    return d+'/'+m+'/'+y;
+  }
+  return new Date(iso).toLocaleDateString('pt-BR');
+}
 function fmtDateTime(iso){if(!iso)return '—';const d=new Date(iso);return d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
 function daysSince(iso){return Math.floor((Date.now()-new Date(iso).getTime())/(1000*60*60*24));}
 function todayISO(){return new Date().toISOString().slice(0,10);}
@@ -1143,7 +1155,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v26';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v27';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -1748,7 +1760,7 @@ function renderLancQuebras(){
   const comLanc=sortByFilialData(comLancBase,'data');
   const hb=$('#tbl4qhist tbody');if(hb){hb.innerHTML='';
     if(!comLanc.length){
-      hb.innerHTML=`<tr><td colspan="10"><div class="empty-state">Nenhum lançamento de quebra para os filtros selecionados.</div></td></tr>`;
+      hb.innerHTML=`<tr><td colspan="11"><div class="empty-state">Nenhum lançamento de quebra para os filtros selecionados.</div></td></tr>`;
     }else{
       // total geral (todos os filtrados)
       let totalQ=0;
@@ -1762,7 +1774,9 @@ function renderLancQuebras(){
         const l=q.lanc;
         const ct=custoTotal(q.qtd,l.valor);
         const descCell = l.descarte ? (esc(l.descarte) + (l.descObs?`<div class="muted" style="font-size:11px">${esc(l.descObs)}</div>`:'')) : '—';
+        const fotoCell = q.foto ? `<img class="thumb" src="${fotoSrc(q.foto)}" onclick="qViewPhoto('${q.id}')">` : `<span class="thumb empty">s/foto</span>`;
         hb.innerHTML+=`<tr>
+          <td>${fotoCell}</td>
           <td><strong>${txt(q.codigo)}</strong></td>
           <td>${tipoBadge(q.tipo)}</td>
           <td>${esc(q.filial)}</td>
@@ -1775,11 +1789,11 @@ function renderLancQuebras(){
           <td style="white-space:nowrap"><button class="btn ghost sm" onclick="editarLancQuebra('${q.id}')">Editar</button> <button class="btn danger sm" onclick="apagarLancQuebra('${q.id}')">Apagar</button></td></tr>`;
       });
       hb.innerHTML+=`<tr class="total-row">
-        <td colspan="5" style="text-align:right;font-weight:700">Valor total (${comLanc.length} ${comLanc.length===1?'lançamento':'lançamentos'}):</td>
+        <td colspan="6" style="text-align:right;font-weight:700">Valor total (${comLanc.length} ${comLanc.length===1?'lançamento':'lançamentos'}):</td>
         <td style="font-weight:700;color:var(--red)">${fmtMoney(totalQ)}</td>
         <td colspan="4"></td></tr>`;
       if(totalPag>1){
-        hb.innerHTML+=`<tr><td colspan="10" style="padding:10px;background:var(--panel)">
+        hb.innerHTML+=`<tr><td colspan="11" style="padding:10px;background:var(--panel)">
           <div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap">
             <button class="btn ghost sm" onclick="mudarPagHistQ(-1)" ${pagHistQ===1?'disabled':''}>← Anterior</button>
             <span class="muted">Página <strong>${pagHistQ}</strong> de ${totalPag} — exibindo ${pagina.length} de ${comLanc.length}</span>
@@ -2439,7 +2453,7 @@ if(CLOUD_URL){
 /* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
 window.rodarDiagnostico=function(){
   const locais = (DB.quebras||[]).slice();
-  let relatorio = 'DIAGNÓSTICO v26\n\n';
+  let relatorio = 'DIAGNÓSTICO v27\n\n';
   relatorio += 'Quebras neste aparelho: '+locais.length+'\n';
   setSyncStatus('Testando…','saving');
 
