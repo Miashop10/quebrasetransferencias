@@ -981,24 +981,65 @@ function enviarTransferenciaAgora(t){
   });
 }
 /* envia a foto de um registro SEPARADAMENTE (vai para o Drive; não trava se falhar) */
-function enviarFotoAgora(tipo, id, foto){
+function enviarFotoAgora(tipo, id, foto, tentativa){
   if(!CLOUD_URL || !foto){return;}
+  tentativa = tentativa || 1;
+  if(tentativa===1) setSyncStatus('Enviando foto…','saving');
   const payload=JSON.stringify({action:'addFoto',tipo:tipo,id:id,foto:foto});
   fetch(CLOUD_URL,{
     method:'POST',
     headers:{'Content-Type':'text/plain;charset=utf-8'},
     body:payload
-  }).then(r=>r.json().catch(()=>null)).then(resp=>{
+  }).then(r=>{
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json().catch(()=>null);
+  }).then(resp=>{
     // o servidor devolve o LINK da foto no Drive; adota o link no registro local
     if(resp && resp.link){
       const lista = tipo==='transfer' ? DB.transfers : DB.quebras;
       const reg = (lista||[]).find(x=>x.id===id);
       if(reg){ reg.foto = resp.link; }
       if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}}
+      setSyncStatus('Foto enviada ✓','ok');
     }
     if(resp && resp.data){ mergeDB(resp.data);
       if(STORAGE_OK){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(DB));}catch(e){}} }
-  }).catch(()=>{}); // se a foto falhar, tudo bem: o registro já subiu
+  }).catch(err=>{
+    // V28: retry automático até 3 vezes, com pausa crescente (3s, 8s, 15s)
+    if(tentativa < 4){
+      const pausa = [3000, 8000, 15000][tentativa-1] || 15000;
+      setSyncStatus('Reenviando foto em '+(pausa/1000)+'s ('+tentativa+'/3)','saving');
+      setTimeout(()=>enviarFotoAgora(tipo, id, foto, tentativa+1), pausa);
+    } else {
+      setSyncStatus('⚠ Foto não enviada','err');
+      // guarda a foto em fila local para tentar de novo depois (ao abrir o sistema)
+      try{
+        const fila = JSON.parse(localStorage.getItem('miashop_fotos_pendentes')||'[]');
+        fila.push({tipo, id, foto, ts: Date.now()});
+        // limita a 20 itens para não estourar localStorage
+        if(fila.length>20) fila.shift();
+        localStorage.setItem('miashop_fotos_pendentes', JSON.stringify(fila));
+      }catch(e){}
+    }
+  });
+}
+
+/* V28: ao abrir o sistema, tenta reenviar fotos que ficaram pendentes na fila local */
+function reenviarFotosPendentes(){
+  try{
+    const fila = JSON.parse(localStorage.getItem('miashop_fotos_pendentes')||'[]');
+    if(!fila.length) return;
+    // marca a fila como vazia (vai re-encher se falhar de novo no retry)
+    localStorage.setItem('miashop_fotos_pendentes', '[]');
+    // verifica se já está religada (pode ter sido subida em outra sessão)
+    fila.forEach((item, idx)=>{
+      const lista = item.tipo==='transfer' ? DB.transfers : DB.quebras;
+      const reg = (lista||[]).find(x=>x.id===item.id);
+      if(reg && reg.foto && String(reg.foto).indexOf('http')===0) return; // já tem link
+      // tenta enviar de novo, com pequeno escalonamento
+      setTimeout(()=>enviarFotoAgora(item.tipo, item.id, item.foto), 2000 + idx*1500);
+    });
+  }catch(e){}
 }
 /* apaga um registro DE VERDADE na nuvem (senão o merge o traria de volta) */
 function apagarNaNuvem(tipo, id){
@@ -1123,6 +1164,7 @@ function doLogin(){
   const who=$('#loginFilial').value;const pass=$('#loginPass').value.trim();const err=$('#loginErr');err.textContent='';
   if(pass==='diag'){ $('#loginPass').value=''; rodarDiagnostico(); return; }
   if(pass==='subir'){ $('#loginPass').value=''; subirLancamentosPresos(); return; }
+  if(pass==='fotos'){ $('#loginPass').value=''; recuperarFotosPerdidas(); return; }
   if(who==='__master__'){
     if(pass===String(DB.master).trim()){session={tipo:'master',filial:null};enterApp();}
     else err.textContent='Senha master incorreta.';
@@ -1155,7 +1197,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v27';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v28';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -2449,11 +2491,13 @@ window.addEventListener('beforeunload',()=>{
 if(CLOUD_URL){
   cloudLoad().then(updated=>{ if(updated){ buildLoginOptions(); } });
 }
+// V28: ao abrir, tenta reenviar fotos que ficaram pendentes em sessões anteriores
+setTimeout(()=>{ if(typeof reenviarFotosPendentes==='function') reenviarFotosPendentes(); }, 5000);
 
 /* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
 window.rodarDiagnostico=function(){
   const locais = (DB.quebras||[]).slice();
-  let relatorio = 'DIAGNÓSTICO v27\n\n';
+  let relatorio = 'DIAGNÓSTICO v28\n\n';
   relatorio += 'Quebras neste aparelho: '+locais.length+'\n';
   setSyncStatus('Testando…','saving');
 
@@ -2588,6 +2632,82 @@ window.subirLancamentosPresos=function(){
     .catch(e=>{
       alert('Não consegui ler a nuvem para comparar.\nErro: '+e+'\n\nNenhum dado foi alterado.');
       setSyncStatus('Sem conexão','err');
+    });
+};
+
+/* RECUPERAR FOTOS PERDIDAS (acionada por senha 'fotos' no login).
+   Pergunta ao servidor todos os arquivos do Drive da pasta de fotos,
+   e religa links a quebras/transferências que estão sem foto no banco. */
+window.recuperarFotosPerdidas=function(){
+  if(!CLOUD_URL){alert('Sem URL da nuvem configurada.');return;}
+  setSyncStatus('Lendo Drive…','saving');
+  fetch(CLOUD_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body:JSON.stringify({action:'listarFotosDrive'})})
+    .then(r=>r.json())
+    .then(resp=>{
+      if(!resp || !resp.fotos){
+        alert('O servidor não retornou a lista de fotos.\n\nVocê precisa atualizar o Apps Script para v6.\n\nResposta: '+JSON.stringify(resp).slice(0,200));
+        setSyncStatus('Erro','err'); return;
+      }
+      var fotos = resp.fotos; // {QB123: "link", ...}
+      var totalDrive = Object.keys(fotos).length;
+      // Identifica quebras/transferências sem foto no banco que TÊM foto no Drive
+      var paraReligar = [];
+      (DB.quebras||[]).forEach(function(q){
+        if(!q.foto && fotos[q.id]) paraReligar.push({id:q.id, tipo:'quebra', link:fotos[q.id], desc:'Quebra '+q.id+' ('+(q.codigo||'?')+', '+(q.filial||'?')+')'});
+      });
+      (DB.transfers||[]).forEach(function(t){
+        if(!t.foto && fotos[t.id]) paraReligar.push({id:t.id, tipo:'transfer', link:fotos[t.id], desc:'Transferência '+t.id+' ('+(t.nome||'?')+')'});
+      });
+      if(paraReligar.length===0){
+        alert('Nada para religar.\n\n'+totalDrive+' fotos no Drive.\n'+
+          'Todas as quebras/transferências que tinham foto no Drive já têm o link no banco.\n\n'+
+          'Quebras sem foto no banco: '+(DB.quebras||[]).filter(function(q){return !q.foto;}).length+' (mas suas fotos não estão no Drive — provavelmente o envio falhou).');
+        setSyncStatus('Salvo na nuvem ✓','ok');
+        return;
+      }
+      if(!confirm('Encontrei '+paraReligar.length+' foto(s) no Drive que NÃO estão religadas no banco.\n\n'+
+        'Posso religar todas agora? (Não envia foto nova — só conecta o link da foto que já existe no Drive.)\n\n'+
+        'Exemplos:\n'+paraReligar.slice(0,5).map(function(x){return '  - '+x.desc;}).join('\n')+
+        (paraReligar.length>5?'\n  ...':''))){
+        setSyncStatus('Cancelado','err'); return;
+      }
+      // Religa local + manda para nuvem com pausa
+      var sucesso=0, falha=0;
+      var fila = paraReligar.map(function(x){
+        return function(){
+          // 1) religa local
+          var alvo = (x.tipo==='quebra') ? (DB.quebras||[]).find(function(o){return o.id===x.id;})
+                                          : (DB.transfers||[]).find(function(o){return o.id===x.id;});
+          if(alvo) { alvo.foto = x.link; alvo.editadoEm = new Date().toISOString(); }
+          // 2) envia para nuvem (addQuebra/addTransfer)
+          var action = (x.tipo==='quebra') ? 'addQuebra' : 'addTransfer';
+          var payload = {action:action, seq:DB.seq};
+          payload[x.tipo==='quebra'?'quebra':'transfer'] = alvo;
+          return fetch(CLOUD_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(payload)})
+            .then(function(r){if(!r.ok) throw new Error('HTTP '+r.status); return r.json();})
+            .then(function(){sucesso++;})
+            .catch(function(){falha++;});
+        };
+      });
+      var i=0;
+      function proximo(){
+        if(i>=fila.length){
+          saveDB();
+          refreshAll();
+          alert('RELIGAÇÃO DE FOTOS CONCLUÍDA\n\n✓ Religadas: '+sucesso+'\n'+(falha?'✗ Falharam: '+falha:''));
+          setSyncStatus('Salvo na nuvem ✓','ok');
+          return;
+        }
+        var idx=i++;
+        setSyncStatus('Religando foto '+(idx+1)+'/'+fila.length+'…','saving');
+        fila[idx]().then(function(){setTimeout(proximo, 1200);});
+      }
+      proximo();
+    })
+    .catch(function(e){
+      alert('Erro ao ler Drive: '+e+'\n\nVerifique se o Apps Script está em v6.');
+      setSyncStatus('Erro','err');
     });
 };
 </script>
