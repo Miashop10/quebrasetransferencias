@@ -1197,7 +1197,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v28';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v28.1';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -2489,7 +2489,13 @@ window.addEventListener('beforeunload',()=>{
 });
 // se a nuvem estiver configurada, busca os dados e atualiza as opções de login
 if(CLOUD_URL){
-  cloudLoad().then(updated=>{ if(updated){ buildLoginOptions(); } });
+  // V28.1: sempre reconstrói as opções de login depois do cloudLoad,
+  // mesmo quando 'updated' é falsey. Bug antes: aparelhos sem localStorage
+  // ficavam só com Master/CD/Filial 1 porque o buildLoginOptions só rodava
+  // de novo quando updated===true, mas isso falhava em algumas redes.
+  cloudLoad().finally(()=>{ buildLoginOptions(); });
+  // segunda tentativa após 3 segundos (caso a rede seja lenta)
+  setTimeout(()=>{ cloudLoad().finally(()=>{ buildLoginOptions(); }); }, 3000);
 }
 // V28: ao abrir, tenta reenviar fotos que ficaram pendentes em sessões anteriores
 setTimeout(()=>{ if(typeof reenviarFotosPendentes==='function') reenviarFotosPendentes(); }, 5000);
@@ -2497,7 +2503,7 @@ setTimeout(()=>{ if(typeof reenviarFotosPendentes==='function') reenviarFotosPen
 /* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
 window.rodarDiagnostico=function(){
   const locais = (DB.quebras||[]).slice();
-  let relatorio = 'DIAGNÓSTICO v28\n\n';
+  let relatorio = 'DIAGNÓSTICO v28.1\n\n';
   relatorio += 'Quebras neste aparelho: '+locais.length+'\n';
   setSyncStatus('Testando…','saving');
 
