@@ -897,6 +897,20 @@ function dbParaNuvem(){
 }
 function doCloudSave(){
   if(!CLOUD_URL)return;
+  // V28.2 BLINDAGEM: NUNCA enviar DEFAULT_DB para a nuvem.
+  // Se este aparelho ainda está com o DB padrão de fábrica (2 filiais
+  // com senhas cd123 e filial1), provavelmente nunca conseguiu baixar
+  // a nuvem direito. Enviar isso sobrescreveria as filiais reais.
+  const fk = Object.keys(DB.filiais||{});
+  const ehDefault = fk.length<=2 &&
+    DB.filiais['Centro de Distribuição']==='cd123' &&
+    DB.filiais['Filial 1']==='filial1';
+  if(ehDefault){
+    setSyncStatus('Aguardando dados da nuvem…','saving');
+    // tenta forçar download para sair do estado padrão
+    if(typeof cloudLoad==='function') cloudLoad().then(()=>{ if(typeof buildLoginOptions==='function') buildLoginOptions(); });
+    return;
+  }
   setSyncStatus('Salvando…','saving');
   // envia o DB SEM fotos -> payload pequeno
   const payload=JSON.stringify({action:'save',data:dbParaNuvem()});
@@ -1197,7 +1211,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v28.1';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v28.2';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -2480,6 +2494,12 @@ if(!STORAGE_OK){const w=$('#storageWarn');if(w)w.classList.remove('hidden');}
 // ao fechar/recarregar a aba, envia uma última vez como rede de segurança
 window.addEventListener('beforeunload',()=>{
   if(CLOUD_URL && session){
+    // V28.2: não enviar DEFAULT_DB nem no fechamento
+    const fk = Object.keys(DB.filiais||{});
+    const ehDefault = fk.length<=2 &&
+      DB.filiais['Centro de Distribuição']==='cd123' &&
+      DB.filiais['Filial 1']==='filial1';
+    if(ehDefault) return;
     try{
       // keepalive permite o envio continuar mesmo com a aba fechando; aguenta payload com foto
       fetch(CLOUD_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
@@ -2503,7 +2523,7 @@ setTimeout(()=>{ if(typeof reenviarFotosPendentes==='function') reenviarFotosPen
 /* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
 window.rodarDiagnostico=function(){
   const locais = (DB.quebras||[]).slice();
-  let relatorio = 'DIAGNÓSTICO v28.1\n\n';
+  let relatorio = 'DIAGNÓSTICO v28.2\n\n';
   relatorio += 'Quebras neste aparelho: '+locais.length+'\n';
   setSyncStatus('Testando…','saving');
 
