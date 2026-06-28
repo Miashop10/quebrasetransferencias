@@ -362,6 +362,8 @@ input[type=file]{font-size:13px;color:var(--ink-soft)}
     </div>
     <p class="login-sub">Controle de transferência de mercadorias entre filiais.</p>
 
+    <div id="cargaAviso" style="background:#fff7e6;border:1px solid #f0c674;color:#7a5d00;padding:8px 12px;margin-bottom:12px;border-radius:6px;font-size:13px">Conectando à nuvem…</div>
+
     <div class="field">
       <label>Filial / Acesso</label>
       <select id="loginFilial"></select>
@@ -897,17 +899,20 @@ function dbParaNuvem(){
 }
 function doCloudSave(){
   if(!CLOUD_URL)return;
-  // V28.2 BLINDAGEM: NUNCA enviar DEFAULT_DB para a nuvem.
-  // Se este aparelho ainda está com o DB padrão de fábrica (2 filiais
-  // com senhas cd123 e filial1), provavelmente nunca conseguiu baixar
-  // a nuvem direito. Enviar isso sobrescreveria as filiais reais.
+  // V29 BLINDAGEM AMPLIADA: NUNCA enviar para a nuvem se este aparelho
+  // está num estado "limpo/suspeito" - significa que provavelmente não
+  // conseguiu baixar os dados reais ainda, e enviar agora sobrescreveria
+  // a nuvem boa. Estado suspeito = DEFAULT_DB OU sem registros + poucas filiais.
   const fk = Object.keys(DB.filiais||{});
   const ehDefault = fk.length<=2 &&
     DB.filiais['Centro de Distribuição']==='cd123' &&
     DB.filiais['Filial 1']==='filial1';
-  if(ehDefault){
+  const semRegistros = (!DB.transfers || DB.transfers.length===0) &&
+                       (!DB.quebras   || DB.quebras.length===0);
+  const estadoSuspeito = ehDefault || (fk.length <= 2 && semRegistros);
+  if(estadoSuspeito){
     setSyncStatus('Aguardando dados da nuvem…','saving');
-    // tenta forçar download para sair do estado padrão
+    // tenta forçar download para sair do estado limpo
     if(typeof cloudLoad==='function') cloudLoad().then(()=>{ if(typeof buildLoginOptions==='function') buildLoginOptions(); });
     return;
   }
@@ -1211,7 +1216,7 @@ function enterApp(){
     document.body.classList.add('mode-filial');
     document.body.classList.remove('mode-master');
   }
-  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v28.2';
+  $('#footerNote').textContent='Quebras e Transferências entre filiais • '+(session.tipo==='master'?'Sessão MASTER':'Sessão '+session.filial)+' • v29';
   switchTab('v1');
   refreshAll();
   // busca a versão mais recente da nuvem e atualiza a tela quando chegar
@@ -2494,12 +2499,14 @@ if(!STORAGE_OK){const w=$('#storageWarn');if(w)w.classList.remove('hidden');}
 // ao fechar/recarregar a aba, envia uma última vez como rede de segurança
 window.addEventListener('beforeunload',()=>{
   if(CLOUD_URL && session){
-    // V28.2: não enviar DEFAULT_DB nem no fechamento
+    // V29: não enviar para a nuvem se o aparelho está em estado suspeito
     const fk = Object.keys(DB.filiais||{});
     const ehDefault = fk.length<=2 &&
       DB.filiais['Centro de Distribuição']==='cd123' &&
       DB.filiais['Filial 1']==='filial1';
-    if(ehDefault) return;
+    const semRegistros = (!DB.transfers || DB.transfers.length===0) &&
+                         (!DB.quebras   || DB.quebras.length===0);
+    if(ehDefault || (fk.length <= 2 && semRegistros)) return;
     try{
       // keepalive permite o envio continuar mesmo com a aba fechando; aguenta payload com foto
       fetch(CLOUD_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
@@ -2509,13 +2516,45 @@ window.addEventListener('beforeunload',()=>{
 });
 // se a nuvem estiver configurada, busca os dados e atualiza as opções de login
 if(CLOUD_URL){
-  // V28.1: sempre reconstrói as opções de login depois do cloudLoad,
-  // mesmo quando 'updated' é falsey. Bug antes: aparelhos sem localStorage
-  // ficavam só com Master/CD/Filial 1 porque o buildLoginOptions só rodava
-  // de novo quando updated===true, mas isso falhava em algumas redes.
-  cloudLoad().finally(()=>{ buildLoginOptions(); });
-  // segunda tentativa após 3 segundos (caso a rede seja lenta)
-  setTimeout(()=>{ cloudLoad().finally(()=>{ buildLoginOptions(); }); }, 3000);
+  // V29: BOOT ROBUSTO - tenta baixar da nuvem várias vezes até pegar todas
+  // as filiais. Importante para aparelhos com cache limpo / modo privado /
+  // rede lenta. Cada tentativa reconstrói o seletor de filial.
+  let tentativasCarga = 0;
+  const MAX_TENTATIVAS_CARGA = 4;
+  function tentarCarregar(){
+    tentativasCarga++;
+    cloudLoad().finally(()=>{
+      buildLoginOptions();
+      // se ainda só temos as filiais padrão e ainda há tentativas, tenta de novo
+      const numFiliais = Object.keys(DB.filiais||{}).length;
+      const ehSoPadrao = numFiliais <= 2 &&
+        DB.filiais['Centro de Distribuição'] === 'cd123' &&
+        DB.filiais['Filial 1'] === 'filial1';
+      if(ehSoPadrao && tentativasCarga < MAX_TENTATIVAS_CARGA){
+        // aviso visual para o usuário saber que está tentando
+        const banner = document.getElementById('cargaAviso');
+        if(banner) banner.textContent = 'Conectando à nuvem… (tentativa '+(tentativasCarga+1)+' de '+MAX_TENTATIVAS_CARGA+')';
+        setTimeout(tentarCarregar, 2500);
+      } else if(ehSoPadrao){
+        // após todas as tentativas, mostra aviso forte
+        const banner = document.getElementById('cargaAviso');
+        if(banner){
+          banner.textContent = '⚠ Não foi possível baixar as filiais da nuvem. Verifique sua conexão e atualize a página (Ctrl+Shift+R).';
+          banner.style.background = '#fee';
+          banner.style.color = '#900';
+          banner.style.border = '1px solid #c00';
+          banner.style.padding = '8px';
+          banner.style.marginBottom = '8px';
+          banner.style.borderRadius = '6px';
+        }
+      } else {
+        // OK - filiais carregadas
+        const banner = document.getElementById('cargaAviso');
+        if(banner) banner.style.display = 'none';
+      }
+    });
+  }
+  tentarCarregar();
 }
 // V28: ao abrir, tenta reenviar fotos que ficaram pendentes em sessões anteriores
 setTimeout(()=>{ if(typeof reenviarFotosPendentes==='function') reenviarFotosPendentes(); }, 5000);
@@ -2523,7 +2562,7 @@ setTimeout(()=>{ if(typeof reenviarFotosPendentes==='function') reenviarFotosPen
 /* ===== DIAGNÓSTICO: digite "diag" no campo de senha do login e clique Entrar ===== */
 window.rodarDiagnostico=function(){
   const locais = (DB.quebras||[]).slice();
-  let relatorio = 'DIAGNÓSTICO v28.2\n\n';
+  let relatorio = 'DIAGNÓSTICO v29\n\n';
   relatorio += 'Quebras neste aparelho: '+locais.length+'\n';
   setSyncStatus('Testando…','saving');
 
