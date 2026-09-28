@@ -474,6 +474,7 @@ async function api(payload){
   payload.senha = payload.senha || (sessao && sessao.senha);
   const gravando = /^(add|save|update|delete|lancar)/.test(payload.action);
   syncOn(gravando);
+  const t0 = Date.now();
   try{
     const r = await fetch(API_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(payload) });
     const j = await r.json();
@@ -481,7 +482,27 @@ async function api(payload){
     return j;
   } finally {
     syncOff();
+    console.log('[api]', payload.action, (Date.now()-t0)+'ms'); // diagnóstico de desempenho
   }
+}
+// Após alterar um registro localmente: guarda no aparelho e redesenha só as telas
+function aposMutacaoLocal_(){
+  salvarCacheLocal_();
+  redesenharTudo_();
+}
+// Aplica um lançamento/edição Shop9 no registro local, sem rebuscar tudo do servidor
+function aplicarLancamentoLocal_(id, d){
+  const q = quebras.find(x=>x.id===id);
+  if(q){
+    q.status = 'lancado';
+    q.shop9Transferencia = d.transferencia;
+    const n = parseFloat(String(d.custo).replace(',','.'));
+    q.shop9Custo = isNaN(n) ? '' : String(n);
+    q.shop9Data = d.dataLancamento;
+    q.descarte = d.descarte;
+    q.descarteObs = d.descarte==='avaria' ? d.descarteObs : '';
+  }
+  aposMutacaoLocal_();
 }
 
 /* ---------- login ---------- */
@@ -652,9 +673,18 @@ async function salvarQuebra(){
   removerFoto();
 
   try{
-    await api(dados);
+    const r = await api(dados);
+    quebras.unshift({
+      id: r.id, dataQuebra: r.dataQuebra || hojeLocal(), filial: dados.filial,
+      codigo: dados.codigo, quantidade: dados.quantidade, tipo: dados.tipo,
+      nf: dados.tipo === 'quebra fornecedor' ? dados.nf : '', fornecedor: dados.fornecedor,
+      responsavel: dados.responsavel, funcionario: dados.funcionario, obs: dados.obs,
+      fotoId: r.fotoId || '', status: 'pendente',
+      shop9Transferencia: '', shop9Custo: '', shop9Data: '', descarte: '', descarteObs: '',
+      criadoEm: r.criadoEm || agoraLocal_()
+    });
+    aposMutacaoLocal_();
     toast('Quebra do código '+dados.codigo+' registrada!');
-    carregarQuebras();
   }catch(e){
     // se o formulário ainda estiver vazio, devolve os dados pra não perder nada
     const intocado = ['fCodigo','fQuantidade','fFornecedor','fNF','fObs','fFuncionario']
@@ -752,8 +782,9 @@ async function excluirQuebra(id){
   if(!confirm('Excluir este registro? A foto também será removida do Drive.')) return;
   try{
     await api({ action:'deleteQuebra', id });
+    quebras = quebras.filter(q=>q.id!==id);
+    aposMutacaoLocal_();
     toast('Registro excluído.');
-    carregarQuebras();
   }catch(e){ toast(e.message, true); }
 }
 
@@ -979,17 +1010,18 @@ function editarS9(id){
 }
 async function salvarEdicaoS9(id){
   const descarte = $('e_x').value;
+  const dados = {
+    action:'lancarShop9', id,
+    transferencia: $('e_t').value.trim(),
+    custo: $('e_c').value.trim(),
+    dataLancamento: $('e_d').value,
+    descarte,
+    descarteObs: descarte==='avaria' ? $('e_o').value.trim() : ''
+  };
   try{
-    await api({
-      action:'lancarShop9', id,
-      transferencia: $('e_t').value.trim(),
-      custo: $('e_c').value.trim(),
-      dataLancamento: $('e_d').value,
-      descarte,
-      descarteObs: descarte==='avaria' ? $('e_o').value.trim() : ''
-    });
+    await api(dados);
+    aplicarLancamentoLocal_(id, dados);
     toast('Lançamento atualizado!');
-    carregarQuebras();
   }catch(e){ toast(e.message, true); }
 }
 const POR_PAGINA = 10;
@@ -1044,37 +1076,46 @@ function editarPend(id){
   row.after(tr);
 }
 async function salvarEdicaoPend(id){
+  const dados = {
+    action:'updateQuebra', id,
+    filial: $('pe_fil').value,
+    codigo: $('pe_cod').value.trim(),
+    quantidade: Number($('pe_qtd').value),
+    tipo: $('pe_tipo').value,
+    nf: $('pe_nf') ? $('pe_nf').value.trim() : '',
+    fornecedor: $('pe_forn').value.trim(),
+    responsavel: $('pe_resp').value.trim(),
+    funcionario: $('pe_func').value.trim(),
+    obs: $('pe_obs').value.trim()
+  };
   try{
-    await api({
-      action:'updateQuebra', id,
-      filial: $('pe_fil').value,
-      codigo: $('pe_cod').value.trim(),
-      quantidade: Number($('pe_qtd').value),
-      tipo: $('pe_tipo').value,
-      nf: $('pe_nf') ? $('pe_nf').value.trim() : '',
-      fornecedor: $('pe_forn').value.trim(),
-      responsavel: $('pe_resp').value.trim(),
-      funcionario: $('pe_func').value.trim(),
-      obs: $('pe_obs').value.trim()
-    });
+    await api(dados);
+    const q = quebras.find(x=>x.id===id);
+    if(q){
+      q.filial = dados.filial; q.codigo = dados.codigo; q.quantidade = dados.quantidade;
+      q.tipo = dados.tipo; q.nf = dados.tipo==='quebra fornecedor' ? dados.nf : '';
+      q.fornecedor = dados.fornecedor; q.responsavel = dados.responsavel;
+      q.funcionario = dados.funcionario; q.obs = dados.obs;
+    }
+    aposMutacaoLocal_();
     toast('Quebra atualizada!');
-    carregarQuebras();
   }catch(e){ toast(e.message, true); }
 }
 async function lancar(id){
   const descarte = $('s9x_'+id).value;
   if(!descarte) return toast('Selecione o descarte.', true);
+  const dados = {
+    action:'lancarShop9', id,
+    transferencia: $('s9t_'+id).value.trim(),
+    custo: $('s9c_'+id).value.trim(),
+    dataLancamento: $('s9d_'+id).value,
+    descarte,
+    descarteObs: $('s9o_'+id) ? $('s9o_'+id).value.trim() : ''
+  };
   try{
-    await api({
-      action:'lancarShop9', id,
-      transferencia: $('s9t_'+id).value.trim(),
-      custo: $('s9c_'+id).value.trim(),
-      dataLancamento: $('s9d_'+id).value,
-      descarte,
-      descarteObs: $('s9o_'+id) ? $('s9o_'+id).value.trim() : ''
-    });
+    await api(dados);
+    aplicarLancamentoLocal_(id, dados);
     toast('Lançado no Shop9!');
-    carregarQuebras();
   }catch(e){ toast(e.message, true); }
 }
 
@@ -1431,9 +1472,9 @@ async function salvarTransferencia(){
   try{
     const r = await api(dados);
     if(!eraEdicao && r.id) transferencias.forEach(t=>{ if(t.transfId===idLocal) t.transfId = r.id; });
+    salvarCacheLocal_();
     toast(eraEdicao ? 'Transferência atualizada!' : 'Transferência registrada!');
     desenharTransferencias();
-    carregarTransferencias(); // confirma com o servidor em segundo plano
   }catch(e){
     // desfaz a linha provisória e devolve os dados
     transferencias = transferencias.filter(t=>t.transfId!==idLocal);
@@ -1564,9 +1605,11 @@ async function excluirTransf(id){
   if(!confirm('Excluir esta transferência inteira (todos os produtos)?')) return;
   try{
     await api({ action:'deleteTransferencia', id });
-    toast('Transferência excluída.');
+    transferencias = transferencias.filter(t=>t.transfId!==id);
     if(id === editandoTransfId) cancelarEdicaoTransf();
-    carregarTransferencias();
+    salvarCacheLocal_();
+    desenharTransferencias();
+    toast('Transferência excluída.');
   }catch(e){ toast(e.message, true); }
 }
 
